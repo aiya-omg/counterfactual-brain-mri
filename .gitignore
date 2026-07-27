@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# ML models & checkpoints (too large for git)
+*.pth
+*.pt
+*.safetensors
+*.bin
+*.ckpt
+ddpm_model/
+lora_model/
+lora_dreambooth/
+lora_official/
+monai_ddpm_model/
+monai_ddpm_model_v2/
+monai_ddpm_model_v3/
+flow_matching_model/
+flow_matching_model_v2/
+
+# Vendored diffusers library
+diffusers/
+
+# Data & outputs
+data/
+demo_output/
+demo_output_test/
+demo_output_v2/
+output_3d/
+output_3d_fm/
+results/
+results_dreambooth/
+results_lora/
+results_official/
+manifest_*.csv
