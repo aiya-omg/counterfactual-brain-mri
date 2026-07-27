@@ -1,4 +1,23 @@
-# 🧠 Counterfactual Visual Attribution for Brain MRI
+# 🧠 Brain MRI Research
+
+## 現在の主軸: SENORA-MRI 外部検証
+
+サハラ以南アフリカの実地臨床脳MRI（SENORA-MRI）に対して、脳卒中病変セグメンテーションの
+外部検証を行う研究に主軸を移しました。設計書は [docs/senora-study-design.md](docs/senora-study-design.md) を参照。
+
+新規手法は提案せず、既製の nnU-Net を用いて以下を明らかにします。
+
+1. 研究グレードデータで学習したモデルの、実地臨床データでの性能低下の定量化
+2. 人工劣化対照群による、低下要因の分解（撮像条件 vs 集団・臨床要因）
+3. 患者の社会経済状況・教育水準と性能の関連解析
+
+---
+
+## 旧: Counterfactual Visual Attribution for Brain MRI
+
+> 以下は初期の反実仮想生成プロトタイプの記録です。BraTS 上で Dice 中央値 0.104 に留まり、
+> 公開SOTA（0.699）との差が大きく、かつ手法的な新規性も確保できないと判断して主軸から外しました。
+> コードは教師なし異常検知の資産として SENORA 側で再利用します。
 
 Stable Diffusion + DDIM Inversion を使って「もしこの患者が健康だったら」という反実仮想画像を生成し、
 実画像との差分から脳腫瘍領域を可視化する研究プロトタイプです。
