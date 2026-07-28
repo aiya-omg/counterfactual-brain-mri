@@ -514,12 +514,16 @@ senora/
 ├── data/                     # .gitignore 対象
 │   ├── senora/               # Zenodo からの生ツリー（変更しない）
 │   ├── senora_normalized/    # 段階0.5 の出力。以降はこちらを使う
-│   └── isles22/
+│   ├── isles2022/            # ISLES 2022 展開済み
+│   ├── isles2022_flair/      # 段階1: FLAIR空間へ登録したマスク
+│   └── nnunet/               # nnUNet_raw / preprocessed / results
 ├── scripts/
 │   ├── fetch_senora.py       # 段階0: 取得と展開（実装済み）
 │   ├── inventory_senora.py   # 段階0: 4.3の集計（実装済み）
 │   ├── normalize_senora.py   # 段階0.5: 監査と正規化（実装済み）
-│   ├── prepare_nnunet.py     # nnU-Net 形式への変換
+│   ├── fetch_isles2022.py    # 段階1: ISLES 2022 取得（実装済み）
+│   ├── register_isles_flair.py  # 段階1: マスクを FLAIR へ剛体登録
+│   ├── prepare_nnunet_armc.py   # 段階1: nnU-Net Dataset501 配置
 │   ├── degrade.py            # 5.2 の人工劣化 C1〜C3
 │   └── evaluate.py           # 6章の指標算出と層別集計
 ├── notebooks/
@@ -553,6 +557,34 @@ python senora/scripts/inventory_senora.py --data senora/data/senora_normalized \
 `inventory_senora.py` は列名をキーワードで曖昧照合し、照合結果を必ずレポート冒頭に出す。
 想定と違う列に当たった場合は `--show-columns` で実際の列を確認し、
 スクリプト内の `COLUMN_HINTS` を修正する。
+
+### 段階1の再現手順（アームC）
+
+```bash
+conda activate cfmri
+
+# ISLES 2022 取得（約1.7GB）
+python senora/scripts/fetch_isles2022.py
+
+# マスクを DWI → FLAIR へ剛体登録（round-trip Dice で QC）
+python senora/scripts/register_isles_flair.py
+
+# nnU-Net Dataset501 に配置
+# ※ SimpleITK / nnU-Net は日本語パスを読めないため、既定出力は %USERPROFILE%\senora_nnunet
+python senora/scripts/prepare_nnunet_armc.py
+
+# 環境変数（PowerShell）
+$env:nnUNet_raw = "$env:USERPROFILE\senora_nnunet\nnUNet_raw"
+$env:nnUNet_preprocessed = "$env:USERPROFILE\senora_nnunet\nnUNet_preprocessed"
+$env:nnUNet_results = "$env:USERPROFILE\senora_nnunet\nnUNet_results"
+
+nnUNetv2_plan_and_preprocess -d 501 --verify_dataset_integrity
+nnUNetv2_train 501 3d_fullres 0
+```
+
+RTX 4070 12GB では patch size の手動縮小が必要な場合がある（8章リスク表）。
+Windows では作業ツリーに日本語が含まれると SimpleITK が読めないため、
+nnU-Net の入出力は `%USERPROFILE%\senora_nnunet`（ASCII のみ）に置く。
 
 ---
 

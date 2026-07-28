@@ -11,6 +11,13 @@
 2. 人工劣化対照群による、低下要因の分解（撮像条件 vs 集団・臨床要因）
 3. 患者の社会経済状況・教育水準と性能の関連解析
 
+### 進捗（2026-07-28）
+
+- 段階0〜0.6完了。主アームは FLAIR（16例）、学習元は ISLES 2022 FLAIR
+- 段階1進行中: ISLES 登録済み205例で nnU-Net fold0 学習中
+- 主要スクリプトは `senora/scripts/`（取得・正規化・登録・nnU-Net配置）
+- nnU-Net の作業ディレクトリは Windows の日本語パス回避のため `%USERPROFILE%\senora_nnunet`
+
 ---
 
 ## 旧: Counterfactual Visual Attribution for Brain MRI
