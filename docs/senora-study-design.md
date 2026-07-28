@@ -94,9 +94,9 @@ SENORA-MRI は社会経済状況（高/中/低）と教育水準（初等/中等
 |---|---|
 | 正式名 | Stroke and Epilepsy Neuroimaging Open Repository for Africa — MRI |
 | 出所 | Medserve Kano Diagnostic Center / Aminu Kano Teaching Hospital, Kano, Nigeria |
-| DOI | 10.5281/zenodo.20757773 |
+| DOI | 10.5281/zenodo.20757772（concept DOI。最新版 v1.1 = レコード 20773721） |
 | ライセンス | CC BY 4.0 |
-| 公開 | 2026-06-19 |
+| 公開 | 2026-06-19（v1.0） / 2026-06-20（v1.1） |
 | 症例数 | 103名（虚血性脳卒中 89、出血性 3、てんかん 3、他） |
 | 病変マスク | 23例（読影医2名、ITK-SNAP v3.8.0、読影医間 Dice 0.777 ± 0.144） |
 | 装置 | Siemens Magnetom Essenza 1.5T |
@@ -117,14 +117,25 @@ SENORA-MRI は社会経済状況（高/中/低）と教育水準（初等/中等
 | T2w 冠状断 | 4470 | 82 | 5 mm |
 | T2w 矢状断 | 4570 | 80 | 5 mm |
 
-メタデータ（participants.tsv、15項目）: 年齢、性別、BMI、社会経済状況、教育水準、
-脳卒中サブタイプ、発症状態（Acute / Chronic / Unknown）、利き手、品質フラグ（PASS / PARTIAL / FAIL）、出身州。
+メタデータ（participants.tsv、実測14列）: `participant_id`, `age`, `sex`, `weight`, `height`,
+`bmi`, `stroke_subtype`, `presentation_status`, `handedness`, `state_of_residence`,
+`education`, `ses`, `has_lesion_mask`, `mask_type`。
+
+> データセット記述には品質フラグ（PASS / PARTIAL / FAIL）が15項目目として挙げられているが、
+> 実際の participants.tsv には**存在しない**。QC による症例除外は行えない（4.3 参照）。
+
+**ダウンロードの注意**: 初版レコード 20757773 にはメタデータプレビュー（5KB）しか含まれず、
+画像ZIP 2分割（計約5.0GB）は v1.1 レコード 20773721 にある。
+`senora/scripts/fetch_senora.py` は concept DOI 経由で常に最新版を解決するため、この差を意識する必要はない。
 
 ### 4.2 学習元（アーム別）
 
 発症からの経過とシーケンスの対応から、2つのアームに分ける。
 
-**アームA（主）: 急性期・DWIベース**
+> 主従は段階0の実測を受けて入れ替えた。以下の「主」「従」は当初想定であり、
+> 確定版は 4.4 を参照。
+
+**アームA: 急性期・DWIベース**（当初は主、実測後は従）
 
 | 項目 | 内容 |
 |---|---|
@@ -136,14 +147,14 @@ SENORA-MRI は社会経済状況（高/中/低）と教育水準（初等/中等
 | ライセンス | CC BY 4.0 |
 | 入手 | Zenodo 10.5281/zenodo.7153326（約1.7GB、申請不要） |
 
-主アームとする理由:
+当初これを主アームとした理由:
 - SENORA に DWI がある
 - ISLES に 1.5T Siemens が含まれ、SENORA の装置に比較的近い
 - ネイティブ空間・頭蓋除去済みで、SENORA 側の前処理と揃えやすい
 - 低資源環境では急性期の判断がより切実
 - 申請不要で即入手できる
 
-**アームB（従）: 慢性期・T1wベース**
+**アームB: 慢性期・T1wベース**（当初は従、実測後は主）
 
 | 項目 | 内容 |
 |---|---|
@@ -156,20 +167,60 @@ SENORA-MRI は社会経済状況（高/中/低）と教育水準（初等/中等
 SENORA の Chronic 症例に対応させる。ただし MNI 登録済み・高解像度という点で
 SENORA との差が大きく、ドメインギャップの上限を測る役割になる。
 
-### 4.3 段階0で確定させる数字
+### 4.3 段階0の結果（participants.tsv 実測、2026-07-28）
 
-本書の想定は公開メタデータからの推定であり、以下は実データで確認する。
+`senora/scripts/fetch_senora.py --metadata-only` と `inventory_senora.py` による実測値。
+再現手順は 10 節、生成物は `senora/results/inventory.md`。
 
-- [ ] マスク付き23例の内訳（虚血性/出血性、Acute/Chronic、品質フラグ）
-- [ ] 各症例で実在するシーケンス（記載は8種だが欠損がある可能性）
-- [ ] アームAに使える症例数（虚血性 かつ Acute かつ DWIあり かつ マスクあり）
-- [ ] アームBに使える症例数（虚血性 かつ Chronic かつ T1wあり かつ マスクあり）
-- [ ] 品質フラグ FAIL の症例数と、除外後の残数
-- [ ] participants.tsv の社会経済状況・教育水準の分布（群間比較に足るか）
+- [x] マスク付き23例の内訳 → 内訳表のとおり。うち手動19、読影医合意4
+- [ ] 各症例で実在するシーケンス → 画像ZIP（5.0GB）取得後に確認
+- [x] アームAに使える症例数 → **7例**
+- [x] アームBに使える症例数 → **11例**
+- [x] 品質フラグ FAIL の症例数 → **QC列が存在せず、判定不能**
+- [x] 社会経済状況・教育水準の分布 → 下表
+
+主要な分布（n=103）:
+
+| 項目 | 分布 |
+|---|---|
+| 脳卒中サブタイプ | 虚血性 89 / 出血性 3 / Seizure 1 / 未記録 10 |
+| 発症状態 | 慢性期 41 / 急性期 35 / 不明 16 / 未記録 10 |
+| 病変マスク | あり 23（手動19、合意4） / なし 80 |
+| 社会経済状況 | Middle 52 / Low 46 / **High 5** |
+| 教育水準 | Primary 29 / Tertiary 27 / 未記録 25 / Secondary 22 |
+
+アーム別の使用可能症例数（虚血性 かつ 発症状態 かつ マスクあり）:
+
+| アーム | 該当数 | 打ち切り基準 10 例 |
+|---|---|---|
+| A（急性期・DWI） | 7 | **未満** |
+| B（慢性期・T1w） | 11 | 満たす |
+| 合計 | 18 | — |
 
 **打ち切り基準**: いずれのアームも使用可能症例が10例を下回る場合、本計画を中止し、
 Crouzon-PUACT（クルーゾン症候群 術前術後ペア上気道CT、68件/34例、画素単位アノテーション済み）
-に切り替える。
+に切り替える。→ アームBが11例で基準を満たすため、**計画は継続**。
+
+### 4.4 実測を受けた設計変更
+
+段階0の結果、当初設計から3点を変更する。
+
+**(1) アームの主従を入れ替える。** 主アームに想定していた急性期・DWI が7例しかなく、
+単独では統計的な主張が難しい。慢性期・T1w（ATLAS v2.0 → SENORA）を主アーム、
+急性期・DWI（ISLES 2022 → SENORA）を従アームとし、後者は事例的な補足に位置づける。
+
+**(2) 全体解析を主軸に据える。** アーム別（7例／11例）の比較は症例数が乏しいため、
+虚血性マスク付き18例をまとめた集団での性能低下の定量化を主要な結果とし、
+アーム別の内訳は副次的な層別解析として報告する。
+
+**(3) RQ3 の層別を2群にする。** 社会経済状況は High が5例しかなく3群比較が成立しない。
+Low（46）と Middle+High（57）の2群で比較する。ただしマスク付き症例に限ると各群10例前後まで
+落ちるため、RQ3 は仮説生成的な位置づけとし、有意差検定ではなく効果量と信頼区間で報告する。
+
+**未記録データの扱い**: サブタイプと発症状態がいずれも未記録の症例が10例ある。
+これらはマスクを持たないため解析集団には入らないが、
+「実地臨床データでは記録の欠損自体が起きる」という所見として本文に記載する。
+発症状態 `Chronic` と `chronic` の表記ゆれが1例あり、集計時は小文字化して扱う。
 
 ---
 
@@ -237,10 +288,10 @@ C0→C3 の低下が撮像条件で説明できる分、C3→C4 の残差が集�
 
 - 発症状態（Acute / Chronic）
 - 脳卒中サブタイプ（虚血性 / 出血性）
-- 社会経済状況（高 / 中 / 低）
-- 教育水準
+- 社会経済状況（Low / Middle+High の2群。4.4 (3) のとおり High が5例のため3群にはしない）
+- 教育水準（未記録が25例あるため、未記録を独立した群として扱う）
 - 年齢層、性別
-- 品質フラグ（PASS / PARTIAL）
+- ~~品質フラグ（PASS / PARTIAL）~~ → participants.tsv に QC 列がなく実施不能
 
 n が小さいため、群間比較はノンパラメトリック検定（Mann-Whitney U / Kruskal-Wallis）とし、
 多重比較補正を行う。効果量と信頼区間を必ず併記し、p値のみの主張はしない。
@@ -258,7 +309,7 @@ n が小さいため、群間比較はノンパラメトリック検定（Mann-W
 
 | 段階 | 内容 | 目安 | 次に進む条件 |
 |---|---|---|---|
-| 0 | SENORA-MRI を取得し、4.3 のチェックリストを埋める | 2〜3日 | 使用可能症例が各アーム10例以上 |
+| 0 | SENORA-MRI を取得し、4.3 のチェックリストを埋める | 2〜3日 | 使用可能症例が各アーム10例以上 → **メタデータ側は完了（4.3）。シーケンス実在の確認のみ残** |
 | 1 | ISLES 2022 取得、nnU-Net でソース内ベースライン確立 | 1〜2週 | ソース内 Dice が文献値と同等 |
 | 2 | SENORA へ適用、性能低下を測定、失敗例を目視分類 | 1週 | 定量結果が得られる（低下の有無を問わない） |
 | 3 | 対照実験 C1〜C3 を実施、要因分解 | 2週 | 低下幅の何割が撮像条件で説明できるか算出 |
@@ -300,8 +351,8 @@ senora/
 │   ├── isles22/
 │   └── atlas2/
 ├── scripts/
-│   ├── fetch_senora.py       # 段階0: 取得と展開
-│   ├── inventory_senora.py   # 段階0: 4.3のチェックリストを自動集計
+│   ├── fetch_senora.py       # 段階0: 取得と展開（実装済み）
+│   ├── inventory_senora.py   # 段階0: 4.3の集計（実装済み）
 │   ├── prepare_nnunet.py     # nnU-Net 形式への変換
 │   ├── degrade.py            # 5.2 の人工劣化 C1〜C3
 │   └── evaluate.py           # 6章の指標算出と層別集計
@@ -309,6 +360,25 @@ senora/
 │   └── failure_review.ipynb  # 6.3 の目視分類
 └── results/                  # .gitignore 対象
 ```
+
+### 段階0の再現手順
+
+```bash
+conda activate cfmri
+
+# participants.tsv のみ取得（5KB、数秒）。4.3 の数字はここまでで再現できる
+python senora/scripts/fetch_senora.py --metadata-only
+python senora/scripts/inventory_senora.py
+
+# 画像本体（約5.0GB）。シーケンス実在の確認に必要
+python senora/scripts/fetch_senora.py
+python senora/scripts/inventory_senora.py
+```
+
+`fetch_senora.py` は MD5 照合と中断再開に対応しており、同じコマンドの再実行で続きから取得する。
+`inventory_senora.py` は列名をキーワードで曖昧照合し、照合結果を必ずレポート冒頭に出す。
+想定と違う列に当たった場合は `--show-columns` で実際の列を確認し、
+スクリプト内の `COLUMN_HINTS` を修正する。
 
 ---
 
@@ -326,7 +396,7 @@ senora/
 
 ## 12. 参考文献
 
-1. SENORA-MRI: A Multimodal Brain MRI Dataset with Metadata and Lesion Masks for Stroke and Epilepsy in Northern Nigeria. Zenodo, 2026. doi:10.5281/zenodo.20757773
+1. Zubair AA, Ibrahim U, Abbas RM, et al. SENORA-MRI: A Multimodal Brain MRI Dataset with Metadata and Lesion Masks for Stroke and Epilepsy in Northern Nigeria. Zenodo, 2026. doi:10.5281/zenodo.20757772
 2. Hernandez Petzsche MR, et al. ISLES 2022: A multi-center magnetic resonance imaging stroke lesion segmentation dataset. Sci Data 9, 762 (2022). doi:10.1038/s41597-022-01875-5
 3. Liew SL, et al. ATLAS v2.0: A large, curated, open-source dataset of stroke anatomical brain images and manual lesion segmentations. Sci Data (2022).
 4. Isensee F, et al. nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. Nat Methods 18, 203–211 (2021).
