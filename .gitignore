@@ -1,3 +1,6 @@
+# Editor-local settings (plugin toggles etc.)
+.cursor/settings.json
+
 # Python
 __pycache__/
 *.py[cod]
