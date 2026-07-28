@@ -69,8 +69,10 @@ VALUE_HINTS = {
 # シーケンス判定に使う suffix。
 # BIDS v1.8 の正式な suffix は T2starw だが、実データは T2star を使っている。
 # MRA はデータセット記述の8シーケンスに載っていないが実在する。
+# T2starw / ADC は normalize_senora.py が出力する正規化後の名前
 SEQUENCES = [
-    "T1w", "T2w", "FLAIR", "dwi", "T2star", "T1wCE", "T2wCOR", "T2wSAG", "MRA",
+    "T1w", "T2w", "FLAIR", "dwi", "ADC", "T2star", "T2starw",
+    "T1wCE", "T2wCOR", "T2wSAG", "MRA",
 ]
 
 # 記述に載っている8シーケンス。充足判定はこちらで行う
@@ -116,6 +118,9 @@ def sequence_of(filename: str) -> str | None:
     stem = filename.replace(".nii.gz", "").replace(".nii", "")
     stem = re.sub(r"_run-\d+", "", stem)
     stem = re.sub(r"_ROI\d*$", "", stem)
+    # 正規化後の ADC は sub-XXX_desc-ADC_dwi。suffix は dwi だが中身は別物
+    if "desc-ADC" in stem:
+        return "ADC"
     for seq in SEQUENCES:
         if stem.endswith(f"_{seq}"):
             return seq
@@ -168,17 +173,19 @@ def scan_masks(root: Path) -> set[str]:
     """
     病変マスクを持つ被験者IDの集合を返す。
 
-    マスクは derivatives/ ではなく被験者ディレクトリ直下に
+    生データではマスクは derivatives/ ではなく被験者ディレクトリ直下に
     sub-XXX_lesion_mask*.nii.gz として置かれている。
-    `roi` や `seg` を条件に含めると sub-XXX_MRA_run-NN_ROI1.nii.gz を
-    拾ってしまうため、lesion_mask に限定する。
+    正規化後は derivatives/manual_lesion/ 配下の *_label-lesion_roi.nii.gz。
+    `roi` や `seg` だけを条件にすると sub-XXX_MRA_run-NN_ROI1.nii.gz を
+    拾ってしまうため、この2つの命名に限定する。
     """
     subjects: set[str] = set()
-    for nii in root.rglob("*lesion_mask*.nii*"):
-        for part in nii.parts:
-            if part.startswith("sub-"):
-                subjects.add(part)
-                break
+    for pattern in ("*lesion_mask*.nii*", "*label-lesion*.nii*"):
+        for nii in root.rglob(pattern):
+            for part in nii.parts:
+                if part.startswith("sub-"):
+                    subjects.add(part)
+                    break
     return subjects
 
 
@@ -296,17 +303,24 @@ def main() -> int:
             documented = "はい" if seq in DOCUMENTED_SEQUENCES else "**いいえ**"
             out(f"| {seq} | {seq_counts.get(seq, 0)} | {documented} |")
         out("")
+        # T2starw は T2star の BIDS 標準表記。充足判定では同一とみなす
+        def canonical(found: set[str]) -> set[str]:
+            return {"T2star" if s == "T2starw" else s for s in found}
+
         complete = sum(
             1 for s in seq_map.values()
-            if set(DOCUMENTED_SEQUENCES).issubset(s)
+            if set(DOCUMENTED_SEQUENCES).issubset(canonical(s))
         )
         out(f"記述の8シーケンスをすべて持つ症例: **{complete}** / {len(seq_map)}")
         out("")
 
         # --- 構造上の逸脱 ---
-        out("### 構造上の逸脱")
-        out("")
         depths = scan_nesting(bids_root)
+        dup_total = sum(redundancy.values())
+        violations = {d: n for d, n in depths.items() if d != 1}
+
+        out("### 構造")
+        out("")
         out("正しい BIDS なら画像は `sub-XXX/anat/` の深さ1に置かれる。実際の深さの分布:")
         out("")
         out("```")
@@ -315,15 +329,14 @@ def main() -> int:
             out(f"    深さ {depth}: {depths[depth]:>5} ファイル{marker}")
         out("```")
         out("")
-        dup_total = sum(redundancy.values())
-        dup_subjects = sum(1 for v in redundancy.values() if v > 0)
-        out(f"- 同一シーケンスの重複ファイル: 全体で **{dup_total}** 本、"
-            f"**{dup_subjects}** 例に存在（`_run-NN` 付きの複製）")
-        out(f"- 病変マスクの置き場所: `derivatives/` ではなく被験者ディレクトリ直下")
+        out(f"- 同一シーケンスの重複ファイル: 全体で **{dup_total}** 本")
         out("")
-        out("> BIDS Validator v1.9.0 に通ったとデータセット記述にあるが、"
-            "実際のツリーは BIDS ではない。標準の BIDS ツールはそのまま使えず、"
-            "前処理で正規化する必要がある。")
+        if violations or dup_total:
+            out("> BIDS Validator v1.9.0 に通ったとデータセット記述にあるが、"
+                "実際のツリーは BIDS ではない。標準の BIDS ツールはそのまま使えない。"
+                "`normalize_senora.py` で正規化してから段階1に進むこと。")
+        else:
+            out("> 構造上の逸脱は解消済み。")
         out("")
 
     # --- 2.5 マスクの参照シーケンス ---
