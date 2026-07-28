@@ -25,6 +25,7 @@ COLUMN_HINTS / VALUE_HINTS を修正する。
 """
 
 import argparse
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -65,8 +66,20 @@ VALUE_HINTS = {
     "pass": ["pass"],
 }
 
-# シーケンス判定に使う BIDS suffix
-SEQUENCES = ["T1w", "T2w", "FLAIR", "dwi", "T2starw", "T1wCE", "T2wCOR", "T2wSAG"]
+# シーケンス判定に使う suffix。
+# BIDS v1.8 の正式な suffix は T2starw だが、実データは T2star を使っている。
+# MRA はデータセット記述の8シーケンスに載っていないが実在する。
+SEQUENCES = [
+    "T1w", "T2w", "FLAIR", "dwi", "T2star", "T1wCE", "T2wCOR", "T2wSAG", "MRA",
+]
+
+# 記述に載っている8シーケンス。充足判定はこちらで行う
+DOCUMENTED_SEQUENCES = [
+    "T1w", "T2w", "FLAIR", "dwi", "T2star", "T1wCE", "T2wCOR", "T2wSAG",
+]
+
+# 読影医が各マスクを描いた参照シーケンスの一覧
+SEGMENTATION_REPORT = "_segmentation_report.csv"
 
 
 def find_participants_tsv(root: Path) -> Path | None:
@@ -98,37 +111,70 @@ def value_is(value: object, concept: str) -> bool:
     return any(hint in text for hint in VALUE_HINTS.get(concept, []))
 
 
-def scan_sequences(bids_root: Path) -> dict[str, set[str]]:
+def sequence_of(filename: str) -> str | None:
+    """ファイル名からシーケンス suffix を1つ取り出す。_run-NN は無視する。"""
+    stem = filename.replace(".nii.gz", "").replace(".nii", "")
+    stem = re.sub(r"_run-\d+", "", stem)
+    stem = re.sub(r"_ROI\d*$", "", stem)
+    for seq in SEQUENCES:
+        if stem.endswith(f"_{seq}"):
+            return seq
+    return None
+
+
+def scan_sequences(bids_root: Path) -> tuple[dict[str, set[str]], dict[str, int]]:
     """
-    BIDS ツリーを走査し、被験者ごとに実在するシーケンスの集合を返す。
-    ファイル名の suffix（_T1w.nii.gz など）で判定する。
+    ツリーを走査し、被験者ごとに実在するシーケンスの集合と、
+    同一シーケンスに対する重複ファイル数（_run-NN を含む総数 − 種類数）を返す。
     """
     available: dict[str, set[str]] = {}
+    redundancy: dict[str, int] = {}
     for sub_dir in sorted(bids_root.glob("sub-*")):
         if not sub_dir.is_dir():
             continue
-        found = set()
+        counts: Counter = Counter()
         for nii in sub_dir.rglob("*.nii*"):
-            stem = nii.name.replace(".nii.gz", "").replace(".nii", "")
-            for seq in SEQUENCES:
-                if stem.endswith(f"_{seq}") or f"_{seq}." in nii.name:
-                    found.add(seq)
-        available[sub_dir.name] = found
-    return available
+            if "lesion_mask" in nii.name.lower():
+                continue
+            seq = sequence_of(nii.name)
+            if seq:
+                counts[seq] += 1
+        available[sub_dir.name] = set(counts)
+        redundancy[sub_dir.name] = sum(counts.values()) - len(counts)
+    return available, redundancy
+
+
+def scan_nesting(bids_root: Path) -> Counter:
+    """
+    被験者ディレクトリ直下から画像までの階層の深さを数える。
+    正しい BIDS なら anat/ か dwi/ の1階層。実データは多重ネストがある。
+    """
+    depths: Counter = Counter()
+    for sub_dir in sorted(bids_root.glob("sub-*")):
+        if not sub_dir.is_dir():
+            continue
+        for nii in sub_dir.rglob("*.nii*"):
+            depths[len(nii.relative_to(sub_dir).parts) - 1] += 1
+    return depths
+
+
+def load_segmentation_report(root: Path) -> pd.DataFrame | None:
+    """マスクの参照シーケンスを記録した _segmentation_report.csv を読む。"""
+    hits = sorted(root.rglob(SEGMENTATION_REPORT))
+    return pd.read_csv(hits[0]) if hits else None
 
 
 def scan_masks(root: Path) -> set[str]:
     """
     病変マスクを持つ被験者IDの集合を返す。
-    derivatives 配下、または lesion / mask / seg を含むファイル名を対象にする。
+
+    マスクは derivatives/ ではなく被験者ディレクトリ直下に
+    sub-XXX_lesion_mask*.nii.gz として置かれている。
+    `roi` や `seg` を条件に含めると sub-XXX_MRA_run-NN_ROI1.nii.gz を
+    拾ってしまうため、lesion_mask に限定する。
     """
     subjects: set[str] = set()
-    keywords = ("lesion", "mask", "roi", "seg")
-    for nii in root.rglob("*.nii*"):
-        name = nii.name.lower()
-        in_derivatives = "derivatives" in {p.lower() for p in nii.parts}
-        if not (in_derivatives or any(k in name for k in keywords)):
-            continue
+    for nii in root.rglob("*lesion_mask*.nii*"):
         for part in nii.parts:
             if part.startswith("sub-"):
                 subjects.add(part)
@@ -233,7 +279,7 @@ def main() -> int:
         out("画像を含めて確認するには `python fetch_senora.py` を実行してください。")
         out("")
     else:
-        seq_map = scan_sequences(bids_root)
+        seq_map, redundancy = scan_sequences(bids_root)
         mask_subjects = scan_masks(args.data)
         out(f"- BIDS ルート: `{bids_root}`")
         out(f"- 画像ディレクトリを持つ被験者: **{len(seq_map)}**")
@@ -244,13 +290,57 @@ def main() -> int:
             seq_counts.update(found)
         out("シーケンス別の保有症例数:")
         out("")
-        out("| シーケンス | 症例数 |")
-        out("|---|---|")
+        out("| シーケンス | 症例数 | 記述の8種に含まれるか |")
+        out("|---|---|---|")
         for seq in SEQUENCES:
-            out(f"| {seq} | {seq_counts.get(seq, 0)} |")
+            documented = "はい" if seq in DOCUMENTED_SEQUENCES else "**いいえ**"
+            out(f"| {seq} | {seq_counts.get(seq, 0)} | {documented} |")
         out("")
-        complete = sum(1 for s in seq_map.values() if len(s) >= len(SEQUENCES))
-        out(f"8シーケンスすべてを持つ症例: **{complete}** / {len(seq_map)}")
+        complete = sum(
+            1 for s in seq_map.values()
+            if set(DOCUMENTED_SEQUENCES).issubset(s)
+        )
+        out(f"記述の8シーケンスをすべて持つ症例: **{complete}** / {len(seq_map)}")
+        out("")
+
+        # --- 構造上の逸脱 ---
+        out("### 構造上の逸脱")
+        out("")
+        depths = scan_nesting(bids_root)
+        out("正しい BIDS なら画像は `sub-XXX/anat/` の深さ1に置かれる。実際の深さの分布:")
+        out("")
+        out("```")
+        for depth in sorted(depths):
+            marker = "" if depth == 1 else "  ← BIDS違反"
+            out(f"    深さ {depth}: {depths[depth]:>5} ファイル{marker}")
+        out("```")
+        out("")
+        dup_total = sum(redundancy.values())
+        dup_subjects = sum(1 for v in redundancy.values() if v > 0)
+        out(f"- 同一シーケンスの重複ファイル: 全体で **{dup_total}** 本、"
+            f"**{dup_subjects}** 例に存在（`_run-NN` 付きの複製）")
+        out(f"- 病変マスクの置き場所: `derivatives/` ではなく被験者ディレクトリ直下")
+        out("")
+        out("> BIDS Validator v1.9.0 に通ったとデータセット記述にあるが、"
+            "実際のツリーは BIDS ではない。標準の BIDS ツールはそのまま使えず、"
+            "前処理で正規化する必要がある。")
+        out("")
+
+    # --- 2.5 マスクの参照シーケンス ---
+    seg_report = load_segmentation_report(args.data)
+    if seg_report is not None:
+        out("## 2.5 マスクを描いた参照シーケンス")
+        out("")
+        out(f"`{SEGMENTATION_REPORT}` より（n={len(seg_report)}）。")
+        out("**学習元データの選択を左右する最重要の数字。**")
+        out("")
+        out("```")
+        lines.extend(render_counter(distribution(seg_report["sequence"])))
+        out("```")
+        out("")
+        out("> T1w に描かれたマスクは存在しない。T1w で学習した ATLAS v2.0 モデルを")
+        out("> 評価するには、別シーケンス上のマスクを T1w 空間へ再標本化する必要があり、")
+        out("> スライス厚 5mm では幾何誤差が無視できない。")
         out("")
 
     # --- 3. 臨床属性の分布 ---
@@ -305,6 +395,20 @@ def main() -> int:
                 return True
             return str(subject) in mask_subjects
 
+        # 被験者 -> マスクを描いた参照シーケンス
+        mask_reference: dict[str, str] = {}
+        if seg_report is not None:
+            mask_reference = {
+                str(r["subject_id"]): str(r["sequence"]).strip().upper()
+                for _, r in seg_report.iterrows()
+            }
+
+        def drawn_on(subject: str, seq: str) -> bool:
+            # 参照シーケンスが分からない場合は条件から外す
+            if not mask_reference:
+                return True
+            return mask_reference.get(str(subject), "") == seq
+
         rows = []
         for _, row in df.iterrows():
             subject = row[subject_col]
@@ -327,17 +431,28 @@ def main() -> int:
                 "qc_fail": qc_fail,
                 "has_dwi": has_sequence(subject, "dwi"),
                 "has_t1w": has_sequence(subject, "T1w"),
+                "has_flair": has_sequence(subject, "FLAIR"),
                 "has_mask": has_mask(subject, row),
+                "mask_drawn_on": mask_reference.get(str(subject), ""),
+                "on_dwi": drawn_on(subject, "DWI"),
+                "on_t1w": drawn_on(subject, "T1W"),
+                "on_flair": drawn_on(subject, "FLAIR"),
             })
 
         elig = pd.DataFrame(rows)
+        # マスクを描いた参照シーケンスとモデルの入力シーケンスが一致していないと
+        # 幾何的に対応が取れないため、アーム条件に参照シーケンスを含める
         arm_a = elig[
             elig.ischemic & elig.acute & elig.has_dwi
-            & elig.has_mask & ~elig.qc_fail
+            & elig.has_mask & ~elig.qc_fail & elig.on_dwi
         ]
         arm_b = elig[
             elig.ischemic & elig.chronic & elig.has_t1w
-            & elig.has_mask & ~elig.qc_fail
+            & elig.has_mask & ~elig.qc_fail & elig.on_t1w
+        ]
+        arm_flair = elig[
+            elig.ischemic & elig.has_flair
+            & elig.has_mask & ~elig.qc_fail & elig.on_flair
         ]
 
         skipped = []
@@ -347,19 +462,25 @@ def main() -> int:
             skipped.append("マスク有無")
         if qc_col is None:
             skipped.append("品質フラグ")
+        if not mask_reference:
+            skipped.append("マスクの参照シーケンス")
         out(f"打ち切り基準: 各アーム **{CUTOFF} 例**")
         if skipped:
             out("")
             out(f"> 未適用の条件: {', '.join(skipped)}。以下は該当数の上限値です。")
         out("")
-        out("| アーム | 条件 | 該当数 | 判定 |")
-        out("|---|---|---|---|")
-        for name, subset, cond in [
-            ("A（急性期・DWI）", arm_a, "虚血性 かつ Acute かつ DWI かつ マスク かつ QC≠FAIL"),
-            ("B（慢性期・T1w）", arm_b, "虚血性 かつ Chronic かつ T1w かつ マスク かつ QC≠FAIL"),
+        out("| アーム | 学習元 | 条件 | 該当数 | 判定 |")
+        out("|---|---|---|---|---|")
+        for name, source, subset, cond in [
+            ("A（急性期・DWI）", "ISLES 2022", arm_a,
+             "虚血性 / Acute / DWIあり / DWI上のマスク"),
+            ("B（慢性期・T1w）", "ATLAS v2.0", arm_b,
+             "虚血性 / Chronic / T1wあり / T1w上のマスク"),
+            ("C（FLAIR、新案）", "要検討", arm_flair,
+             "虚血性 / FLAIRあり / FLAIR上のマスク"),
         ]:
             verdict = "続行可" if len(subset) >= CUTOFF else "**基準未満**"
-            out(f"| {name} | {cond} | {len(subset)} | {verdict} |")
+            out(f"| {name} | {source} | {cond} | {len(subset)} | {verdict} |")
         out("")
 
         out("内訳（段階的に条件を足したときの残数）:")
@@ -374,9 +495,9 @@ def main() -> int:
         out("```")
         out("")
 
-        if max(len(arm_a), len(arm_b)) < CUTOFF:
-            out("> **両アームとも基準未満です。** 設計書 4.3 の打ち切り基準に従い、")
-            out("> アームを分けず全症例をまとめる設計に切り替えるか、")
+        if max(len(arm_a), len(arm_b), len(arm_flair)) < CUTOFF:
+            out("> **すべてのアームが基準未満です。** 設計書 4.3 の打ち切り基準に従い、")
+            out("> アームを分けず虚血性マスク付き全例をまとめる設計に切り替えるか、")
             out("> Crouzon-PUACT への変更を検討してください。")
             out("")
 
