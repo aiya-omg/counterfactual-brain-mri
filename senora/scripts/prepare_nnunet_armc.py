@@ -19,11 +19,14 @@ prepare_nnunet_armc.py
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import shutil
 import sys
 from pathlib import Path
 
+import nibabel as nib
+import numpy as np
 from tqdm import tqdm
 
 
@@ -44,6 +47,15 @@ def main() -> int:
     )
     parser.add_argument("--dataset-id", type=int, default=501)
     parser.add_argument("--dataset-name", type=str, default="ISLES22FLAIR")
+    parser.add_argument(
+        "--description", type=str, default=None,
+        help="dataset.json に載せる説明。既定は等方版の文言",
+    )
+    parser.add_argument(
+        "--skip-empty-labels", action="store_true",
+        help="マスクが空の症例を除く。分解能を落とすと薄い病変が消えるため、"
+             "病変なしと教える症例が混ざるのを避けたいときに使う",
+    )
     args = parser.parse_args()
 
     if not args.src.exists():
@@ -67,16 +79,25 @@ def main() -> int:
     labels_dict = {"background": 0, "lesion": 1}
     training = []
 
+    # 症例IDは受理された症例の並び順に振る。元の被験者IDへ戻せるよう
+    # 対応表を残す。段階1の検収で登録QCと突き合わせるのに必要
+    mapping: list[dict] = []
+    skipped_empty: list[str] = []
+
     for i, flair in enumerate(tqdm(cases, desc="nnU-Net 配置"), start=1):
         case_id = f"ISLES_{i:04d}"
         mask = flair.with_name(flair.name.replace("_FLAIR.nii.gz", "_label-lesion_roi.nii.gz"))
         if not mask.exists():
             print(f"[warn] マスクなし、スキップ: {flair}")
             continue
+        if args.skip_empty_labels and not np.asarray(nib.load(mask).dataobj).any():
+            skipped_empty.append(flair.parents[2].name)
+            continue
         shutil.copy2(flair, images / f"{case_id}_0000{file_ending}")
         shutil.copy2(mask, labels / f"{case_id}{file_ending}")
         training.append({"image": f"./imagesTr/{case_id}_0000{file_ending}",
                          "label": f"./labelsTr/{case_id}{file_ending}"})
+        mapping.append({"case_id": case_id, "subject": flair.parents[2].name})
 
     dataset = {
         "channel_names": channel_names,
@@ -84,7 +105,7 @@ def main() -> int:
         "numTraining": len(training),
         "file_ending": file_ending,
         "name": args.dataset_name,
-        "description": (
+        "description": args.description or (
             "ISLES 2022 FLAIR-only stroke lesion segmentation. "
             "Masks rigidly transformed from DWI to FLAIR native space."
         ),
@@ -96,7 +117,17 @@ def main() -> int:
         json.dumps(dataset, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
+    map_path = ds_dir / "case_to_subject.csv"
+    with map_path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["case_id", "subject"])
+        writer.writeheader()
+        writer.writerows(mapping)
+
     print(f"\n完了: {len(training)} 例 → {ds_dir}")
+    if skipped_empty:
+        print(f"マスクが空のため除外: {len(skipped_empty)} 例")
+        print(f"  {', '.join(skipped_empty)}")
+    print(f"対応表: {map_path}")
     print("次:")
     print(f"  set nnUNet_raw={args.raw}")
     print(f"  set nnUNet_preprocessed={args.raw.parent / 'nnUNet_preprocessed'}")

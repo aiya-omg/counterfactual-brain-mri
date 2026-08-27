@@ -18,7 +18,9 @@
   （症例ごとの Dice 中位 0.132）
 - 段階2: SENORA 16例へ適用したが Dice 中位 0.000、8例は予測が空
 - 原因は撮像分解能の不一致。断面外のボクセル間隔が学習元 0.71 mm に対し
-  SENORA は 6.8 mm で約10倍。学習元を SENORA の分解能に落として再学習が必要
+  SENORA は 6.8 mm で約10倍
+- 対応: ISLES を SENORA の撮像幾何（5 mm 厚 / 6.8 mm 間隔）へ落として Dataset502 を作成。
+  病変体積は中位97.4%が残り、fold0 を再学習中（約24時間）
 - 詳細は [docs/worklog-2026-08-27.md](docs/worklog-2026-08-27.md) と設計書 8.5
 - 主要スクリプトは `senora/scripts/`（取得・正規化・登録・配置・検収・推論）
 - nnU-Net の作業ディレクトリは Windows の日本語パス回避のため `%USERPROFILE%\senora_nnunet`

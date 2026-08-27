@@ -70,13 +70,18 @@ def tissue_median(volume: np.ndarray) -> float:
     return float(np.median(head)) if head.size else float("nan")
 
 
-def case_to_subject(registered_root: Path) -> dict[str, str]:
+def case_to_subject(registered_root: Path, raw: Path) -> dict[str, str]:
     """
     nnU-Net の症例ID（ISLES_0001…）を元の被験者IDへ戻す。
 
-    prepare_nnunet_armc.py は sorted() の順に連番を振っているだけで
-    対応表を残していないため、同じ順序を再現して復元する。
+    prepare_nnunet_armc.py が書く対応表があればそれを使う。
+    症例を除外した Dataset では ID に欠番が出るため、並び順からの
+    復元では合わない。対応表がない古い Dataset のみ順序で復元する。
     """
+    mapping_csv = raw / "case_to_subject.csv"
+    if mapping_csv.exists():
+        table = pd.read_csv(mapping_csv)
+        return dict(zip(table["case_id"], table["subject"]))
     cases = sorted(registered_root.glob("sub-*/ses-*/anat/*_FLAIR.nii.gz"))
     return {f"ISLES_{i:04d}": c.parents[2].name for i, c in enumerate(cases, start=1)}
 
@@ -209,7 +214,7 @@ def main() -> int:
     df = pd.concat([df, pd.DataFrame(measures)], axis=1)
 
     # 元の被験者IDへ戻し、登録 QC を突き合わせる
-    mapping = case_to_subject(args.registered)
+    mapping = case_to_subject(args.registered, args.raw)
     df["subject"] = df["case"].map(mapping)
     if args.registration_qc.exists():
         qc = pd.read_csv(args.registration_qc)[["subject", "roundtrip_dice"]]
