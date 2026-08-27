@@ -11,6 +11,8 @@ pandas>=2.2.0
 requests>=2.31.0
 SimpleITK>=2.3.0
 nnunetv2>=2.5.0
+# 頭蓋除去。argparse バックポートが標準ライブラリを隠すため --no-deps で入れる
+hd-bet>=2.0.1
 Pillow>=10.0.0
 matplotlib>=3.8.0
 scipy>=1.12.0
