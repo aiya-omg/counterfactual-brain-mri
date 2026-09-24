@@ -48,9 +48,10 @@ import nibabel as nib
 import numpy as np
 import pandas as pd
 
-# 学習済みモデルの識別子
+# 学習済みモデルの識別子。CLI で上書きできる（案E の Dataset502 など）
 DATASET = "Dataset501_ISLES22FLAIR"
 TRAINER = "nnUNetTrainer__nnUNetPlans__3d_fullres"
+DATASET_ID = "501"
 
 
 def arm_c_subjects(data_root: Path) -> list[str]:
@@ -156,7 +157,7 @@ def predict(work: Path, results: Path, python: Path, folds: str) -> int:
         str(predict_exe),
         "-i", str(stripped),
         "-o", str(out),
-        "-d", "501",
+        "-d", DATASET_ID,
         "-c", "3d_fullres",
         "-f", *folds.split(","),
         "-chk", "checkpoint_best.pth",
@@ -374,12 +375,32 @@ def main() -> int:
         help="nnU-Net / HD-BET の実行ファイルを探す基準",
     )
     parser.add_argument("--folds", default="0", help="使う fold。カンマ区切り")
+    parser.add_argument(
+        "--dataset-id", default="501",
+        help="nnU-Net の Dataset ID。案E の再学習は 502",
+    )
+    parser.add_argument(
+        "--dataset", default=None,
+        help="結果ディレクトリ名。省略時は Dataset{ID}_* を results 配下から探す",
+    )
     parser.add_argument("--out", type=Path, default=root / "results")
     parser.add_argument("--stage", action="store_true", help="複製と頭蓋除去")
     parser.add_argument("--predict", action="store_true", help="推論")
     parser.add_argument("--evaluate", action="store_true", help="評価")
     parser.add_argument("--all", action="store_true", help="上記を順に実行")
     args = parser.parse_args()
+
+    global DATASET, DATASET_ID
+    DATASET_ID = str(args.dataset_id)
+    if args.dataset:
+        DATASET = args.dataset
+    else:
+        matches = sorted(
+            p.name for p in args.results.glob(f"Dataset{int(DATASET_ID):03d}_*")
+            if p.is_dir()
+        )
+        if matches:
+            DATASET = matches[0]
 
     if not any((args.stage, args.predict, args.evaluate, args.all)):
         parser.error("--stage / --predict / --evaluate / --all のいずれかを指定してください")
