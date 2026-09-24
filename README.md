@@ -1,152 +1,55 @@
-# 🧠 Brain MRI Research
+# SENORA-MRI 外部検証
 
-## 現在の主軸: SENORA-MRI 外部検証
+サハラ以南アフリカの実地臨床脳MRI（SENORA-MRI）に対して、研究グレード
+データで学習した脳卒中病変セグメンテーションがどれだけ性能を落とすかを
+測る。新規手法は提案せず、既製の nnU-Net を使う。
 
-サハラ以南アフリカの実地臨床脳MRI（SENORA-MRI）に対して、脳卒中病変セグメンテーションの
-外部検証を行う研究に主軸を移しました。設計書は [docs/senora-study-design.md](docs/senora-study-design.md) を参照。
+設計書: [docs/senora-study-design.md](docs/senora-study-design.md)
+作業ログ: [docs/worklog-2026-08-27.md](docs/worklog-2026-08-27.md)（最新） /
+[docs/worklog-2026-07-28.md](docs/worklog-2026-07-28.md)
+スクリプト: [senora/README.md](senora/README.md)
 
-新規手法は提案せず、既製の nnU-Net を用いて以下を明らかにします。
+## 進捗（2026-08-28）
 
-1. 研究グレードデータで学習したモデルの、実地臨床データでの性能低下の定量化
-2. 人工劣化対照群による、低下要因の分解（撮像条件 vs 集団・臨床要因）
-3. 患者の社会経済状況・教育水準と性能の関連解析
+主アームは FLAIR（SENORA 16例）。学習元は ISLES 2022 FLAIR。
 
-### 進捗（2026-08-28）
+| | Dataset501（等方 0.71 mm） | Dataset502（SENORA と同じ 5 mm / 6.8 mm） |
+|---|---|---|
+| 学習 | 1000 epoch 完了 | 1000 epoch 完了 |
+| ソース内 Dice 中位 | 0.132 | **0.288** |
+| SENORA 16例 Dice 中位 | 0.000 | **0.000** |
 
-- 段階0〜0.6完了。主アームは FLAIR（16例）、学習元は ISLES 2022 FLAIR
-- 段階1 Dataset501（等方）: 症例ごとの Dice 中位 **0.132**。検収不通過
-- 段階1 Dataset502（SENORA と同じ 5 mm / 6.8 mm）: 1000 epoch 完走。
-  症例ごとの Dice 中位 **0.288**。分解能揃えの効果はソース内に出た
-- 段階2: どちらのモデルも SENORA 16例で Dice 中位 **0.000**。
-  間隔は一致しているので、残る制約はラベル由来と病期・装置
-- 詳細は [docs/worklog-2026-08-27.md](docs/worklog-2026-08-27.md) と設計書 8.5
-- 主要スクリプトは `senora/scripts/`（取得・正規化・登録・配置・検収・推論）
-- nnU-Net の作業ディレクトリは Windows の日本語パス回避のため `%USERPROFILE%\senora_nnunet`
+分解能を揃えた効果はソース内にだけ出た。SENORA 側の断面外間隔は
+学習時と一致しているので、空予測の原因はもう補間ではない。
+次は学習元または課題設定の見直し（設計書 8.5.6 の案 A〜D）。
 
----
+## リポジトリ構成
 
-## 旧: Counterfactual Visual Attribution for Brain MRI
+```
+docs/                      設計書と作業ログ
+senora/scripts/            現行のパイプライン
+senora/data/               生データ（gitignore）
+senora/results/            測定値と図（gitignore。数字は作業ログへ転記）
+legacy/                    旧・反実仮想生成プロトタイプ（主軸から外した）
+requirements.txt           現行（nnU-Net / HD-BET）の依存
+```
 
-> 以下は初期の反実仮想生成プロトタイプの記録です。BraTS 上で Dice 中央値 0.104 に留まり、
-> 公開SOTA（0.699）との差が大きく、かつ手法的な新規性も確保できないと判断して主軸から外しました。
-> コードは教師なし異常検知の資産として SENORA 側で再利用します。
+学習の実体は Windows の日本語パスを避けるため
+`%USERPROFILE%\senora_nnunet` に置く。
 
-Stable Diffusion + DDIM Inversion を使って「もしこの患者が健康だったら」という反実仮想画像を生成し、
-実画像との差分から脳腫瘍領域を可視化する研究プロトタイプです。
+## 環境
 
-## 環境要件
-
-- GPU: RTX 4070 以上（VRAM 12GB）
-- Python 3.10+
+- GPU: RTX 4070 12GB
+- Python 3.10+（conda 環境 `cfmri`）
 - CUDA 12.x
 
-## セットアップ
-
 ```bash
-# 依存ライブラリのインストール
 pip install -r requirements.txt
-
-# xformers（VRAM節約に必須）
-pip install xformers --index-url https://download.pytorch.org/whl/cu121
+# hd-bet は argparse バックポートが標準ライブラリを隠すため
+pip install hd-bet --no-deps
 ```
 
-## クイックスタート（合成データで動作確認）
+## 旧プロトタイプ
 
-```bash
-# BraTSデータ不要でまず動かす
-python demo.py --use_synthetic --output_dir ./demo_output
-```
-
-## 本番実行フロー
-
-### Step 1: BraTSデータの取得
-https://www.synapse.org/#!Synapse:syn27046444/wiki/ からBraTS2021データをダウンロード
-
-### Step 2: 前処理（NIfTI → PNG スライス）
-
-```bash
-python preprocess.py \
-  --data_dir /path/to/BraTS2021_Training_Data \
-  --output_dir ./data/slices \
-  --modality t2 \
-  --max_patients 20        # まず少数でテスト
-```
-
-### Step 3: Counterfactual生成
-
-```bash
-python counterfactual.py \
-  --input_dir ./data/slices/tumor \
-  --output_dir ./results \
-  --num_images 10 \
-  --steps 50 \
-  --guidance_scale 7.5
-```
-
-### Step 4: 可視化・評価
-
-```bash
-python visualize.py \
-  --original_dir ./data/slices/tumor \
-  --cf_dir ./results/counterfactual \
-  --diff_dir ./results/difference \
-  --mask_dir ./data/slices/masks \    # GTマスクで定量評価
-  --output_dir ./results/report
-```
-
-### Step 5: デモ（実SDモデルで単枚確認）
-
-```bash
-python demo.py \
-  --input_image ./data/slices/tumor/BraTS2021_00000_slice060.png \
-  --gt_mask ./data/slices/masks/BraTS2021_00000_slice060.png \
-  --use_real_sd \
-  --output_dir ./demo_output
-```
-
-## ファイル構成
-
-```
-counterfactual_mri/
-├── requirements.txt      # 依存ライブラリ
-├── preprocess.py         # BraTS NIfTI → PNG変換
-├── counterfactual.py     # メインパイプライン（DDIM Inversion + SD1.5）
-├── visualize.py          # 差分マップ可視化・評価
-├── demo.py               # クイックデモ（合成/実データ両対応）
-└── README.md
-```
-
-## アルゴリズム
-
-```
-腫瘍MRI画像
-    ↓ VAE encode
-潜在変数 z_0
-    ↓ DDIM Inversion（逆拡散）
-ノイズ z_T
-    ↓ DDIM Denoise（"healthy brain MRI"プロンプトで条件付け）
-反実仮想画像（正常脳の推定）
-    ↓ |元画像 - 反実仮想|
-差分マップ → 病変領域の可視化
-```
-
-## RTX 4070 での VRAM使用量目安
-
-| 処理 | VRAM |
-|------|------|
-| SD 1.5 fp16 + xformers (推論) | ~5 GB |
-| SD 1.5 fp16 + xformers (DDIM Inv.) | ~7 GB |
-| 512×512 処理 | ~8 GB |
-
-## 評価指標
-
-GTマスクがある場合、以下の指標を自動計算します：
-- **Dice係数**: 病変領域の重複度（1.0が最高）
-- **IoU**: 予測とGTの交差割合
-- **Precision / Recall**: 精度と再現率
-
-## 参考論文
-
-- Singla et al. (2023) "Explaining the Black-box Smoothly" - Nature Machine Intelligence
-- Latent Drifting (CVPR 2025)
-- DDIM: Song et al. (2020) "Denoising Diffusion Implicit Models"
+[legacy/](legacy/) に残してある。BraTS 上の反実仮想生成で Dice 中央値 0.104。
+公開 SOTA（0.699）との差と新規性の不足から主軸を外した。

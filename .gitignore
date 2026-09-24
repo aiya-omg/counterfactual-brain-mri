@@ -28,7 +28,7 @@ flow_matching_model_v2/
 # Vendored diffusers library
 diffusers/
 
-# SENORA study data & outputs
+# SENORA study data & outputs（数字は docs/ の作業ログへ転記する）
 senora/data/
 senora/results/
 

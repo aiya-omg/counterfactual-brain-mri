@@ -175,7 +175,7 @@ def main() -> int:
 
     fig.tight_layout()
     args.out.mkdir(parents=True, exist_ok=True)
-    png = args.out / f"nnunet_fold{args.fold}_dice.png"
+    png = args.out / f"nnunet_{args.dataset}_fold{args.fold}_dice.png"
     fig.savefig(png, dpi=150)
 
     print(f"読んだログ: {len(parsed['logs'])} 本")

@@ -1,20 +1,16 @@
+# 現行: SENORA アームC（nnU-Net）
+# 旧プロトタイプ（diffusers / LoRA）の依存は legacy/ 側。混ぜない。
 torch>=2.1.0
 torchvision>=0.16.0
-diffusers==0.27.2
-transformers>=4.38.0
-accelerate>=0.27.0
-xformers>=0.0.24
-bitsandbytes>=0.43.0
 nibabel>=5.2.0
 numpy>=1.24.0
 pandas>=2.2.0
 requests>=2.31.0
 SimpleITK>=2.3.0
 nnunetv2>=2.5.0
-# 頭蓋除去。argparse バックポートが標準ライブラリを隠すため --no-deps で入れる
-hd-bet>=2.0.1
-Pillow>=10.0.0
 matplotlib>=3.8.0
 scipy>=1.12.0
 scikit-image>=0.22.0
 tqdm>=4.66.0
+# 頭蓋除去。argparse バックポートが標準ライブラリを隠すため --no-deps で入れる
+hd-bet>=2.0.1
