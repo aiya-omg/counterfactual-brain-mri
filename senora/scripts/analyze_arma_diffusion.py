@@ -64,6 +64,30 @@ RESTRICTED_B1000 = 1.3
 # なるので、この範囲で単位の取り違えは確実に弾ける
 NORMAL_ADC_RANGE = (500.0, 1500.0)
 
+# 比の基準にする正常実質。脳マスク全体の中央値は CSF で高く出るので（855〜1154）、
+# それを基準にすると ADC 約 850 の正常実質まで「0.8 倍未満」に入り、病変外の正常脳の
+# 2〜15% が拡散制限と判定されていた（2026-09-26 に判明）。CSF と境界を除くとこれが約 1% になる
+PARENCHYMA_ADC = (200.0, 1500.0)
+
+
+def normal_reference(adc: np.ndarray, b1000: np.ndarray, brain: np.ndarray,
+                     ref: np.ndarray, subject: str) -> tuple[float, float]:
+    """病変外の正常実質の ADC と b1000 の中央値を返す。単位の確認もここでする。"""
+    normal = brain & ~ref
+    whole = float(np.median(adc[normal]))
+    if not NORMAL_ADC_RANGE[0] <= whole <= NORMAL_ADC_RANGE[1]:
+        raise ValueError(
+            f"{subject}: 正常脳の ADC 中央値 {whole:.3g} が {NORMAL_ADC_RANGE} の外。"
+            f"ADC の単位が × 10^-6 mm²/s でない可能性があり、ADC_CORE = {ADC_CORE} を使えない"
+        )
+    parenchyma = normal & (adc > PARENCHYMA_ADC[0]) & (adc < PARENCHYMA_ADC[1])
+    return float(np.median(adc[parenchyma])), float(np.median(b1000[parenchyma]))
+
+
+def restricted_tissue(adc: np.ndarray, b1000: np.ndarray, brain: np.ndarray,
+                      na: float, nb: float) -> np.ndarray:
+    return brain & (adc > 0) & (adc < RESTRICTED_ADC * na) & (b1000 > RESTRICTED_B1000 * nb)
+
 CONNECTIVITY = ndimage.generate_binary_structure(3, 3)
 
 
@@ -92,6 +116,26 @@ def lesion_detection(ref: np.ndarray, pred: np.ndarray) -> dict:
     }
 
 
+def alternative_references(ref: np.ndarray, restricted: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    読影を足さずに作る2つの代替参照（感度分析、設計書 8.6.9）。
+
+      拡張参照  参照マスク ∪ 参照に接する拡散制限域の連結成分
+                参照が急性域の一部を描き漏らしていた場合の上限側の正解
+      急性参照  拡張参照のうち拡散制限を示す部分だけ
+                ISLES 2022 のラベル（急性の拡散制限域）に近い定義
+
+    拡散制限域は閾値で切った雑音を含むので、参照に接する（1ボクセル膨張で重なる）
+    連結成分だけを採る。参照から離れた拡散制限域は、描き漏れか雑音かを区別できないので含めない。
+    """
+    lab, n = ndimage.label(restricted, CONNECTIVITY)
+    near = ndimage.binary_dilation(ref, CONNECTIVITY)
+    touching = set(np.unique(lab[near & restricted])) - {0}
+    extension = np.isin(lab, list(touching)) if touching else np.zeros_like(ref)
+    extended = ref | extension
+    return extended, extended & restricted
+
+
 def measure(work: Path, pred_dir: Path, subject: str) -> tuple[dict, dict]:
     ref_img = nib.load(work / "masks" / f"{subject}.nii.gz")
     ref = np.asarray(ref_img.dataobj) > 0
@@ -102,15 +146,9 @@ def measure(work: Path, pred_dir: Path, subject: str) -> tuple[dict, dict]:
     adc = load(work / "inputs" / f"{subject}_0001.nii.gz")
     voxel_ml = abs(np.linalg.det(ref_img.affine[:3, :3])) / 1000.0
 
-    normal = brain & ~ref
-    nb, na = float(np.median(b1000[normal])), float(np.median(adc[normal]))
-    if not NORMAL_ADC_RANGE[0] <= na <= NORMAL_ADC_RANGE[1]:
-        raise ValueError(
-            f"{subject}: 正常脳の ADC 中央値 {na:.3g} が {NORMAL_ADC_RANGE} の外。"
-            f"ADC の単位が × 10^-6 mm²/s でない可能性があり、ADC_CORE = {ADC_CORE} を使えない"
-        )
-
-    restricted = (adc < RESTRICTED_ADC * na) & (b1000 > RESTRICTED_B1000 * nb)
+    na, nb = normal_reference(adc, b1000, brain, ref, subject)
+    restricted = restricted_tissue(adc, b1000, brain, na, nb)
+    extended, acute_ref = alternative_references(ref, restricted)
     core_tissue = brain & (adc > 0) & (adc < ADC_CORE)
     core = ref & core_tissue
     rest = ref & ~core
@@ -121,6 +159,7 @@ def measure(work: Path, pred_dir: Path, subject: str) -> tuple[dict, dict]:
         "volume_ml": round(float(ref.sum() * voxel_ml), 3),
         "pred_volume_ml": round(float(pred.sum() * voxel_ml), 3),
         "normal_adc": round(na, 1),
+        "normal_restricted_frac": float(restricted[brain & ~ref].mean()),
         "adc_ratio": float(np.median(adc[ref]) / na),
         "b1000_ratio": float(np.median(b1000[ref]) / nb),
         "restricted_frac": float(restricted[ref].mean()),
@@ -130,6 +169,10 @@ def measure(work: Path, pred_dir: Path, subject: str) -> tuple[dict, dict]:
         "recall_core": float((pred & core).sum() / core.sum()) if core.any() else float("nan"),
         "recall_noncore": float((pred & rest).sum() / rest.sum()) if rest.any() else float("nan"),
         "pred_core_frac": float(core_tissue[pred].mean()) if pred.any() else float("nan"),
+        "extension_ml": round(float((extended & ~ref).sum() * voxel_ml), 3),
+        "dice_extended": dice(pred, extended),
+        "acute_ref_ml": round(float(acute_ref.sum() * voxel_ml), 3),
+        "dice_acute_ref": dice(pred, acute_ref) if acute_ref.any() else float("nan"),
     }
     row.update(lesion_detection(ref, pred))
 
@@ -145,8 +188,38 @@ def measure(work: Path, pred_dir: Path, subject: str) -> tuple[dict, dict]:
             "fp_restricted_frac": float(restricted[fp].mean()),
             "fp_core_frac": float(core_tissue[fp].mean()),
         })
-    images = {"b0": b0, "b1000": b1000, "ADC": adc, "ref": ref, "pred": pred}
+    images = {"b0": b0, "b1000": b1000, "ADC": adc, "ref": ref, "pred": pred,
+              "extension": extended & ~ref}
     return row, images
+
+
+def draw_extension(panels: list[tuple[str, float, dict]], path: Path, tag: str) -> None:
+    """拡張分が大きい症例について、拡張分が最も多いスライスを b1000 と ADC で描く。目視確認用。"""
+    panels = [p for p in panels if p[2]["extension"].any()]
+    panels = sorted(panels, key=lambda p: -int(p[2]["extension"].sum()))[:6]
+    if not panels:
+        return
+    fig, axes = plt.subplots(len(panels), 2, figsize=(6.4, 3.2 * len(panels)), squeeze=False)
+    for r, (subject, _, im) in enumerate(panels):
+        z = int(np.argmax(im["extension"].sum(axis=(0, 1))))
+        for c, name in enumerate(("b1000", "ADC")):
+            ax = axes[r, c]
+            img = im[name].astype(float)
+            vmax = 2000 if name == "ADC" else np.percentile(img[img > 0], 99.5)
+            ax.imshow(np.rot90(img[:, :, z]), cmap="gray", vmin=0, vmax=vmax)
+            for key, color, style in (("ref", "lime", "solid"), ("extension", "magenta", "solid"),
+                                      ("pred", "red", "dashed")):
+                if im[key][:, :, z].any():
+                    ax.contour(np.rot90(im[key][:, :, z]), levels=[0.5], colors=color,
+                               linewidths=0.9, linestyles=style)
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_title(f"{subject} slice {z} {name}", fontsize=9)
+    fig.suptitle(f"{tag}: green = reference, magenta = extension, red dashed = prediction",
+                 fontsize=10)
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
+    fig.savefig(path, dpi=100)
+    plt.close(fig)
 
 
 def draw(panels: list[tuple[str, float, dict]], path: Path, tag: str) -> None:
@@ -215,6 +288,31 @@ def report(df: pd.DataFrame, tag: str) -> str:
             f"{no_core['pred_volume_ml'].median():.2f} mL、1 mL 以下 {silent} / {len(no_core)}"
         )
     lines.append(f"- 病変 F1 中位: {df['lesion_f1'].median():.2f}")
+    lines += [
+        "",
+        "## 代替参照での Dice（感度分析、設計書 8.6.9）",
+        "",
+        "拡張参照 = 参照 ∪ 参照に接する拡散制限域。急性参照 = そのうち拡散制限を示す部分。",
+        "",
+        "| 症例 | Dice（参照） | 拡張分 (mL) | Dice（拡張参照） | 急性参照 (mL) | Dice（急性参照） |",
+        "|---|---|---|---|---|---|",
+    ]
+    for _, r in df.iterrows():
+        lines.append(
+            f"| {r['subject']} | {fmt(r['dice'])} | {r['extension_ml']:.1f} "
+            f"| {fmt(r['dice_extended'])} | {r['acute_ref_ml']:.1f} | {fmt(r['dice_acute_ref'])} |"
+        )
+    lines += [
+        "",
+        f"- Dice 中位: 参照 {df['dice'].median():.3f}、拡張参照 {df['dice_extended'].median():.3f}、"
+        f"急性参照 {df['dice_acute_ref'].median():.3f}（急性参照が空の症例を除く）",
+    ]
+    if len(with_core):
+        lines.append(
+            f"- コアあり {len(with_core)} 例: 参照 {with_core['dice'].median():.3f}、"
+            f"拡張参照 {with_core['dice_extended'].median():.3f}、"
+            f"急性参照 {with_core['dice_acute_ref'].median():.3f}"
+        )
     lines += ["", "記述のための順位相関（n が小さいので p 値は根拠にしない）:", ""]
     for col in ("restricted_frac", "core_frac", "volume_ml"):
         rho, _ = stats.spearmanr(df[col], df["dice"])
@@ -257,6 +355,7 @@ def main() -> int:
     csv_path = args.out / f"senora_arma_stage_{args.tag}.csv"
     df.to_csv(csv_path, index=False)
     draw(panels, args.out / f"arma_overlay_{args.tag}.png", args.tag)
+    draw_extension(panels, args.out / f"arma_extension_{args.tag}.png", args.tag)
     text = report(df, args.tag)
     (args.out / f"senora_arma_stage_{args.tag}.md").write_text(text, encoding="utf-8")
     print(text)

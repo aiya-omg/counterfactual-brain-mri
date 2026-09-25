@@ -66,7 +66,7 @@ import SimpleITK as sitk  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from analyze_arma_diffusion import (  # noqa: E402
-    ADC_CORE, NORMAL_ADC_RANGE, RESTRICTED_ADC, RESTRICTED_B1000,
+    ADC_CORE, normal_reference, restricted_tissue,
 )
 from predict_senora_arma import b1000_index  # noqa: E402
 from predict_senora_armc import find_mask  # noqa: E402
@@ -292,15 +292,12 @@ def stage_case(work: Path, s: str) -> dict:
     adc = np.asarray(nib.load(work / f"{s}_adc.nii.gz").dataobj)
     voxel_ml = abs(np.linalg.det(ref_img.affine[:3, :3])) / 1000.0
 
-    normal = brain & ~ref
-    nb, na = float(np.median(b1000[normal])), float(np.median(adc[normal]))
-    if not NORMAL_ADC_RANGE[0] <= na <= NORMAL_ADC_RANGE[1]:
-        raise ValueError(f"{s}: 正常脳の ADC 中央値 {na:.3g} が {NORMAL_ADC_RANGE} の外")
+    na, nb = normal_reference(adc, b1000, brain, ref, s)
     lesion = ref & brain
     if not lesion.any():
         return {"subject": s, "volume_ml": float(ref.sum() * voxel_ml), "in_brain_frac": 0.0}
     core = lesion & (adc > 0) & (adc < ADC_CORE)
-    restricted = (adc < RESTRICTED_ADC * na) & (b1000 > RESTRICTED_B1000 * nb)
+    restricted = restricted_tissue(adc, b1000, brain, na, nb)
     core_ml = float(core.sum() * voxel_ml)
     core_frac = float(core.sum() / lesion.sum())
     if core_frac >= 0.5:
