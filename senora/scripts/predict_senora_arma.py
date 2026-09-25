@@ -193,6 +193,9 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path, tag
             row["inter_rater_dice"] = float("nan") if row["identical_raters"] else dice(a, b)
 
     df = pd.DataFrame(rows)
+    seg = pd.read_csv(data_root / "_segmentation_report.csv")
+    sequence = dict(zip(seg["subject_id"].astype(str), seg["sequence"].astype(str).str.upper()))
+    df["mask_sequence"] = df["subject"].map(sequence)
     scored = df.dropna(subset=["dice"])
 
     rng = np.random.default_rng(0)
@@ -200,12 +203,21 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path, tag
             for _ in range(10000)]
     lo, hi = np.percentile(boot, [2.5, 97.5])
 
+    n_dwi = int((df["mask_sequence"] == "DWI").sum())
+    n_flair = int((df["mask_sequence"] == "FLAIR").sum())
+
     lines: list[str] = []
     out = lines.append
-    out("# 段階2: SENORA-MRI アームA（急性期・DWI + ADC）への適用")
-    out("")
-    out(f"対象 **{len(df)} 例**（DWI 上にマスクがある症例）。臨床区分は全例 acute だが、"
-        "b1000 と ADC で拡散制限を示すのは一部に限られる。")
+    if n_flair == 0:
+        out("# 段階2: SENORA-MRI アームA（急性期・DWI + ADC）への適用")
+        out("")
+        out(f"対象 **{len(df)} 例**（DWI 上にマスクがある症例）。臨床区分は全例 acute だが、"
+            "b1000 と ADC で拡散制限を示すのは一部に限られる。")
+    else:
+        out("# 段階2: SENORA-MRI 全マスクへの DWI + ADC モデルの適用")
+        out("")
+        out(f"対象 **{len(df)} 例**（DWI 上のマスク {n_dwi} 例、FLAIR 上のマスクを DWI へ写した "
+            f"{n_flair} 例。後者は `stage_senora_lesions.py` の出力）。")
     out("学習元は ISLES 2022 DWI + ADC を SENORA の DWI 幾何（5.5 mm 厚 / 7.15 mm 間隔）"
         "へ落としたもの（Dataset503）。頭蓋除去は b0 に HD-BET をかけて得た脳マスク。")
     out(f"重みと fold: `{tag}`。")
@@ -222,7 +234,7 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path, tag
     out(f"| 再現率 中位 | {scored['recall'].median():.3f} |")
     out(f"| 病変体積 中位 | {scored['volume_ml'].median():.1f} mL |")
     out("")
-    out("n = 7 のため信頼区間は広い。症例ごとの値を主に読む。")
+    out(f"n = {len(scored)} のため信頼区間は広い。症例ごとの値を主に読む。")
     out("")
 
     if baseline_csv.exists():
@@ -234,14 +246,17 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path, tag
         out(f"| ISLES 2022 hold-out（{baseline_csv.stem}） | {len(base)} "
             f"| {base['dice'].median():.3f} "
             f"| {base['volume_ml'].median():.1f} |")
-        out(f"| SENORA アームA | {len(scored)} | {scored['dice'].median():.3f} "
-            f"| {scored['volume_ml'].median():.1f} |")
+        for label, group in (("SENORA（DWI 上のマスク）", scored[scored["mask_sequence"] == "DWI"]),
+                             ("SENORA（FLAIR 上のマスク）", scored[scored["mask_sequence"] == "FLAIR"])):
+            if len(group):
+                out(f"| {label} | {len(group)} | {group['dice'].median():.3f} "
+                    f"| {group['volume_ml'].median():.1f} |")
         out("")
 
     out("## 症例ごとの結果")
     out("")
-    out("| 症例 | Dice | 適合率 | 再現率 | 病変(mL) | 予測(mL) | 厚/間隔(mm) | 読影医間 Dice |")
-    out("|---|---|---|---|---|---|---|---|")
+    out("| 症例 | マスク | Dice | 適合率 | 再現率 | 病変(mL) | 予測(mL) | 厚/間隔(mm) | 読影医間 Dice |")
+    out("|---|---|---|---|---|---|---|---|---|")
     for _, r in scored.sort_values("dice", ascending=False).iterrows():
         precision = f"{r['precision']:.3f}" if pd.notna(r["precision"]) else "—"
         inter = r.get("inter_rater_dice")
@@ -249,7 +264,7 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path, tag
             inter = "同一マスク"
         else:
             inter = f"{inter:.3f}" if pd.notna(inter) else "—"
-        out(f"| {r['subject']} | {r['dice']:.3f} | {precision} | {r['recall']:.3f} "
+        out(f"| {r['subject']} | {r['mask_sequence']} | {r['dice']:.3f} | {precision} | {r['recall']:.3f} "
             f"| {r['volume_ml']:.1f} | {r['pred_volume_ml']:.1f} "
             f"| {r['slice_thickness_mm']}/{r['slice_spacing_mm']} | {inter} |")
     out("")

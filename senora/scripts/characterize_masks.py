@@ -213,9 +213,13 @@ def measure(mask_path: Path, ref_path: Path) -> dict:
         # 揃っていない画像から信号を読んでも意味がない
         return record
 
+    if len(ref_img.shape) > 3:
+        # DWI（b0 / b500 / b1000 の4次元）では測らない。b0 は拡散制限を映さず、
+        # b1000 は頭蓋除去なしの組織中位値がノイズ水準に落ちて比が意味を失う。
+        # DWI の信号は脳マスクと ADC を使う stage_senora_lesions.py で測る
+        return record
+
     ref = np.asarray(ref_img.dataobj, dtype=np.float64)
-    if ref.ndim > 3:
-        ref = ref[..., 0]
     baseline = tissue_median(ref)
     record["tissue_median"] = round(baseline, 1)
     if not np.isfinite(baseline) or baseline <= 0:
@@ -425,7 +429,9 @@ def main() -> int:
     # --- 3. 信号強度 ---
     out("## 4. マスク内の信号強度")
     out("")
-    out("症例内の組織中位値を1としたときの比。")
+    out("症例内の組織中位値を1としたときの比。FLAIR の症例のみ。")
+    out("DWI の症例は測らない（以前の版は b0 で測っており、拡散制限を映していなかった）。")
+    out("DWI と、DWI へ写した FLAIR のマスクの病期は `stage_senora_lesions.py` で ADC から測る。")
     out(f"`{HYPO_RATIO}` 未満を低信号、`{HYPER_RATIO}` 超を高信号とする。")
     out("")
     out("**この節が学習元の選択を決める。** 慢性期の空洞化した梗塞は中心が CSF 様の")

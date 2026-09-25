@@ -180,7 +180,7 @@ def fmt(value: float, digits: int = 3) -> str:
 
 def report(df: pd.DataFrame, tag: str) -> str:
     lines = [
-        f"# アームA 病期別の評価（{tag}）",
+        f"# 病期別の評価（{tag}、{len(df)} 例）",
         "",
         f"急性コア = マスク内で ADC が {ADC_CORE:.0f} × 10⁻⁶ mm²/s 未満。"
         "定義は設計書 8.6.3。",
@@ -207,6 +207,13 @@ def report(df: pd.DataFrame, tag: str) -> str:
             f"再現率（コア）中位 **{with_core['recall_core'].median():.3f}**",
             f"  - 再現率（それ以外）中位 {with_core['recall_noncore'].median():.3f}",
         ]
+    no_core = df[df["core_ml"] < 0.5]
+    if len(no_core):
+        silent = int((no_core["pred_volume_ml"] <= 1.0).sum())
+        lines.append(
+            f"- 急性コアが 0.5 mL 未満の症例: {len(no_core)} 例。予測体積 中位 "
+            f"{no_core['pred_volume_ml'].median():.2f} mL、1 mL 以下 {silent} / {len(no_core)}"
+        )
     lines.append(f"- 病変 F1 中位: {df['lesion_f1'].median():.2f}")
     lines += ["", "記述のための順位相関（n が小さいので p 値は根拠にしない）:", ""]
     for col in ("restricted_frac", "core_frac", "volume_ml"):
