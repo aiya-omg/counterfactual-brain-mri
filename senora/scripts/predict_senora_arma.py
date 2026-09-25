@@ -191,7 +191,8 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> 
     out = lines.append
     out("# 段階2: SENORA-MRI アームA（急性期・DWI + ADC）への適用")
     out("")
-    out(f"対象 **{len(df)} 例**（DWI 上にマスクがある症例、全例急性期）。")
+    out(f"対象 **{len(df)} 例**（DWI 上にマスクがある症例）。臨床区分は全例 acute だが、"
+        "b1000 と ADC で拡散制限を示すのは一部に限られる。")
     out("学習元は ISLES 2022 DWI + ADC を SENORA の DWI 幾何（5.5 mm 厚 / 7.15 mm 間隔）"
         "へ落としたもの（Dataset503）。頭蓋除去は b0 に HD-BET をかけて得た脳マスク。")
     out("")
