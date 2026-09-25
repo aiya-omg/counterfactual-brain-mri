@@ -19,8 +19,11 @@ nnU-Net（Dataset503）を、SENORA アームA（DWI 上にマスクがある7�
   最大値を取って3次元に畳む。読影医2名の症例は合意マスクを使う。
 
 使い方:
-  python predict_senora_arma.py --all
-  python predict_senora_arma.py --evaluate
+  python predict_senora_arma.py --all                       # 最終重み、fold 0
+  python predict_senora_arma.py --predict --evaluate --folds 0,1,2,3,4
+  python predict_senora_arma.py --evaluate --checkpoint best   # 感度分析
+
+予測は <work>/predictions_<重み>_f<fold>、結果は senora_arma_predictions_<同>.csv に出る。
 """
 
 from __future__ import annotations
@@ -120,8 +123,15 @@ def stage(data_root: Path, work: Path, python: Path) -> int:
     return 0
 
 
-def predict(work: Path, results: Path, python: Path, folds: str, dataset: str) -> int:
-    inputs, out = work / "inputs", work / "predictions"
+def run_tag(checkpoint: str, folds: str) -> str:
+    """予測と結果のファイル名に付ける識別子。例: final_f0、final_f01234"""
+    return f"{checkpoint}_f{folds.replace(',', '')}"
+
+
+def predict(
+    work: Path, results: Path, python: Path, folds: str, dataset: str, checkpoint: str
+) -> int:
+    inputs, out = work / "inputs", work / f"predictions_{run_tag(checkpoint, folds)}"
     out.mkdir(parents=True, exist_ok=True)
     if not list(inputs.glob("*_0000.nii.gz")):
         print("エラー: 入力がありません。先に --stage を実行してください", file=sys.stderr)
@@ -133,13 +143,13 @@ def predict(work: Path, results: Path, python: Path, folds: str, dataset: str) -
     if not predict_exe.exists():
         predict_exe = Path("nnUNetv2_predict")
     cmd = [str(predict_exe), "-i", str(inputs), "-o", str(out), "-d", DATASET_ID,
-           "-c", "3d_fullres", "-f", *folds.split(","), "-chk", "checkpoint_best.pth"]
+           "-c", "3d_fullres", "-f", *folds.split(","), "-chk", f"checkpoint_{checkpoint}.pth"]
     print(f"推論: {' '.join(cmd)}")
     return subprocess.run(cmd).returncode
 
 
-def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> int:
-    preds = sorted((work / "predictions").glob("*.nii.gz"))
+def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path, tag: str) -> int:
+    preds = sorted((work / f"predictions_{tag}").glob("*.nii.gz"))
     if not preds:
         print("エラー: 予測がありません", file=sys.stderr)
         return 1
@@ -167,7 +177,9 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> 
             "slice_spacing_mm": meta.get("SpacingBetweenSlices"),
         })
 
-    # 読影医2名の症例では、読影医間 Dice が到達可能な上限の目安になる
+    # 読影医2名の症例では、読影医間 Dice が到達可能な上限の目安になる。
+    # radA と radB がボクセル単位で同一の症例（sub-086）は独立した2名の読影ではないので、
+    # 一致度として扱わず identical_raters で印を付ける
     for row in rows:
         anat = data_root / "derivatives" / "manual_lesion" / row["subject"] / "anat"
         rad_a = sorted(anat.glob("*desc-radA_label-lesion_roi.nii.gz"))
@@ -177,7 +189,8 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> 
             b = np.asarray(nib.load(rad_b[0]).dataobj)
             a = a.reshape(a.shape[:3] + (-1,)).max(axis=3) > 0 if a.ndim > 3 else a > 0
             b = b.reshape(b.shape[:3] + (-1,)).max(axis=3) > 0 if b.ndim > 3 else b > 0
-            row["inter_rater_dice"] = dice(a, b)
+            row["identical_raters"] = bool(np.array_equal(a, b))
+            row["inter_rater_dice"] = float("nan") if row["identical_raters"] else dice(a, b)
 
     df = pd.DataFrame(rows)
     scored = df.dropna(subset=["dice"])
@@ -195,6 +208,7 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> 
         "b1000 と ADC で拡散制限を示すのは一部に限られる。")
     out("学習元は ISLES 2022 DWI + ADC を SENORA の DWI 幾何（5.5 mm 厚 / 7.15 mm 間隔）"
         "へ落としたもの（Dataset503）。頭蓋除去は b0 に HD-BET をかけて得た脳マスク。")
+    out(f"重みと fold: `{tag}`。")
     out("")
     out("| 指標 | 値 |")
     out("|---|---|")
@@ -217,7 +231,8 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> 
         out("")
         out("| 集団 | 例数 | Dice 中位 | 体積 中位(mL) |")
         out("|---|---|---|---|")
-        out(f"| ISLES 2022 hold-out（fold 0） | {len(base)} | {base['dice'].median():.3f} "
+        out(f"| ISLES 2022 hold-out（{baseline_csv.stem}） | {len(base)} "
+            f"| {base['dice'].median():.3f} "
             f"| {base['volume_ml'].median():.1f} |")
         out(f"| SENORA アームA | {len(scored)} | {scored['dice'].median():.3f} "
             f"| {scored['volume_ml'].median():.1f} |")
@@ -230,18 +245,21 @@ def evaluate(work: Path, data_root: Path, out_dir: Path, baseline_csv: Path) -> 
     for _, r in scored.sort_values("dice", ascending=False).iterrows():
         precision = f"{r['precision']:.3f}" if pd.notna(r["precision"]) else "—"
         inter = r.get("inter_rater_dice")
-        inter = f"{inter:.3f}" if pd.notna(inter) else "—"
+        if r.get("identical_raters") is True:
+            inter = "同一マスク"
+        else:
+            inter = f"{inter:.3f}" if pd.notna(inter) else "—"
         out(f"| {r['subject']} | {r['dice']:.3f} | {precision} | {r['recall']:.3f} "
             f"| {r['volume_ml']:.1f} | {r['pred_volume_ml']:.1f} "
             f"| {r['slice_thickness_mm']}/{r['slice_spacing_mm']} | {inter} |")
     out("")
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    csv_path = out_dir / "senora_arma_predictions.csv"
+    csv_path = out_dir / f"senora_arma_predictions_{tag}.csv"
     df.to_csv(csv_path, index=False)
     out(f"症例ごとの測定値を `{csv_path}` に出力しました。")
     report = "\n".join(lines)
-    target = out_dir / "senora_arma_predictions.md"
+    target = out_dir / f"senora_arma_predictions_{tag}.md"
     target.write_text(report, encoding="utf-8")
     print(report)
     print(f"\nレポートを {target} に保存しました")
@@ -260,9 +278,18 @@ def main() -> int:
         "--results", type=Path, default=Path.home() / "senora_nnunet" / "nnUNet_results"
     )
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
-    parser.add_argument("--folds", default="0")
+    parser.add_argument("--folds", default="0", help="カンマ区切り。0,1,2,3,4 でアンサンブル")
+    parser.add_argument(
+        "--checkpoint", choices=("final", "best"), default="final",
+        help="best は fold の検証症例で選んだ重みで、同じ症例での評価が楽観的になる。"
+             "主要な値は final で出す",
+    )
     parser.add_argument("--dataset", default="Dataset503_ISLES22DWIThick")
     parser.add_argument("--out", type=Path, default=root / "results" / "dataset503")
+    parser.add_argument(
+        "--baseline", type=Path, default=None,
+        help="ソース内の症例ごとの表。既定は summarize_source_cv.py の出力",
+    )
     parser.add_argument("--stage", action="store_true")
     parser.add_argument("--predict", action="store_true")
     parser.add_argument("--evaluate", action="store_true")
@@ -274,12 +301,14 @@ def main() -> int:
     if args.stage or args.all:
         if code := stage(args.data, args.work, args.python):
             return code
+    tag = run_tag(args.checkpoint, args.folds)
     if args.predict or args.all:
-        if code := predict(args.work, args.results, args.python, args.folds, args.dataset):
+        if code := predict(args.work, args.results, args.python, args.folds, args.dataset,
+                           args.checkpoint):
             return code
     if args.evaluate or args.all:
-        if code := evaluate(args.work, args.data, args.out,
-                            args.out / "source_baseline_fold0.csv"):
+        baseline = args.baseline or args.out / f"source_cv_{args.checkpoint}.csv"
+        if code := evaluate(args.work, args.data, args.out, baseline, tag):
             return code
     return 0
 

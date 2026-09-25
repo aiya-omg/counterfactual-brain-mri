@@ -78,6 +78,29 @@ def slab_mean(volume: np.ndarray, windows: list[tuple[int, int]]) -> np.ndarray:
     return np.stack([volume[:, :, lo : hi + 1].mean(axis=2) for lo, hi in windows], axis=2)
 
 
+def roundtrip_dice(
+    mask: np.ndarray, thick_mask: np.ndarray, windows: list[tuple[int, int]]
+) -> float:
+    """
+    落としたマスクを元の格子へ戻し、元のマスクとの Dice を返す。
+
+    元スライスは、そのスライスを平均に含めた出力スライスの値を受け取る。
+    どのスラブにも入らないギャップのスライスは、中心が最も近い出力スライスの値を
+    受け取る（撮像されない組織を、隣のスライスで補って読む読影と同じ扱い）。
+    体積の保持率は打ち消し合う誤差（薄い病変の消失と、元が厚い症例での膨らみ）を
+    区別できないため、位置まで含めて一致を見る。
+    """
+    centers = np.array([(lo + hi) / 2.0 for lo, hi in windows])
+    back = np.zeros(mask.shape, dtype=bool)
+    for z in range(mask.shape[2]):
+        inside = [k for k, (lo, hi) in enumerate(windows) if lo <= z <= hi]
+        k = inside[0] if inside else int(np.argmin(np.abs(centers - z)))
+        back[:, :, z] = thick_mask[:, :, k] > 0
+    ref = mask > 0
+    total = int(ref.sum()) + int(back.sum())
+    return 2.0 * int((ref & back).sum()) / total if total else float("nan")
+
+
 def degrade_case(
     dwi_path: Path,
     adc_path: Path,
@@ -87,6 +110,7 @@ def degrade_case(
     thickness_mm: float,
     spacing_mm: float,
     label_threshold: float,
+    write: bool = True,
 ) -> dict:
     subject = dwi_path.parents[2].name
     dwi, dwi_img = load_canonical(dwi_path)
@@ -111,11 +135,12 @@ def degrade_case(
     voxel_ml = abs(np.linalg.det(new_affine[:3, :3])) / 1000.0
     original_ml = int(mask.sum()) * abs(np.linalg.det(dwi_img.affine[:3, :3])) / 1000.0
 
-    out_label.parent.mkdir(parents=True, exist_ok=True)
-    for volume, target in zip((dwi, adc), out_images):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        nib.save(nib.Nifti1Image(slab_mean(volume, windows), new_affine), target)
-    nib.save(nib.Nifti1Image(thick_mask, new_affine), out_label)
+    if write:
+        out_label.parent.mkdir(parents=True, exist_ok=True)
+        for volume, target in zip((dwi, adc), out_images):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            nib.save(nib.Nifti1Image(slab_mean(volume, windows), new_affine), target)
+        nib.save(nib.Nifti1Image(thick_mask, new_affine), out_label)
 
     return {
         "subject": subject,
@@ -126,6 +151,7 @@ def degrade_case(
         "volume_ml_before": round(original_ml, 3),
         "volume_ml_after": round(int(thick_mask.sum()) * voxel_ml, 3),
         "volume_ml_if_any": round(int(any_mask.sum()) * voxel_ml, 3),
+        "roundtrip_dice": round(roundtrip_dice(mask, thick_mask, windows), 4),
         "emptied": bool(thick_mask.sum() == 0 and mask.sum() > 0),
         "empty_before": bool(mask.sum() == 0),
     }
@@ -150,6 +176,10 @@ def main() -> int:
         help="スラブ内の陽性割合がこの値以上なら陽性。既定は多数決",
     )
     parser.add_argument("--out", type=Path, default=root / "results")
+    parser.add_argument(
+        "--qc-only", action="store_true",
+        help="画像を書かずに QC だけ出す。学習に使っている Dataset を書き換えないため",
+    )
     args = parser.parse_args()
 
     if args.spacing < args.thickness:
@@ -187,18 +217,28 @@ def main() -> int:
             [images / f"{case_id}_0000.nii.gz", images / f"{case_id}_0001.nii.gz"],
             labels / f"{case_id}.nii.gz",
             args.thickness, args.spacing, args.label_threshold,
+            write=not args.qc_only,
         )
         records.append(record)
         if "error" in record:
             continue
-        # 落として空になった症例は「病変なし」と教えることになるので除く
+        # 落として空になった症例は「病変なし」と教えることになるので除く。
+        # 副作用として小病変の学習例が系統的に減る（設計書 8.6.5）
         if record["emptied"] or record["empty_before"]:
-            for f in (images / f"{case_id}_0000.nii.gz", images / f"{case_id}_0001.nii.gz",
-                      labels / f"{case_id}.nii.gz"):
-                f.unlink(missing_ok=True)
+            if not args.qc_only:
+                for f in (images / f"{case_id}_0000.nii.gz",
+                          images / f"{case_id}_0001.nii.gz",
+                          labels / f"{case_id}.nii.gz"):
+                    f.unlink(missing_ok=True)
             continue
         training.append(case_id)
         mapping.append({"case_id": case_id, "subject": subject})
+
+    suffix = "" if args.label_threshold == 0.5 else f"_t{args.label_threshold}"
+    if args.qc_only:
+        report_qc(pd.DataFrame(records), args.out / f"isles_dwi_degradation{suffix}.csv",
+                  len(training), len(dwis))
+        return 0
 
     dataset = {
         "channel_names": {"0": "DWI", "1": "ADC"},
@@ -223,13 +263,28 @@ def main() -> int:
         writer.writeheader()
         writer.writerows(mapping)
 
-    df = pd.DataFrame(records)
-    args.out.mkdir(parents=True, exist_ok=True)
-    csv_path = args.out / "isles_dwi_degradation.csv"
-    df.to_csv(csv_path, index=False)
+    report_qc(pd.DataFrame(records), args.out / f"isles_dwi_degradation{suffix}.csv",
+              len(training), len(dwis))
+    print("次:")
+    print(f"  nnUNetv2_plan_and_preprocess -d {args.dataset_id} --verify_dataset_integrity")
+    print(f"  nnUNetv2_train {args.dataset_id} 3d_fullres 0")
+    return 0
 
+
+def report_qc(df: pd.DataFrame, csv_path: Path, n_training: int, n_total: int) -> None:
+    """
+    QC を書き出して要約する。
+
+    体積は出力スライス間隔（7.15 mm）で数える。等間隔の断面から体積を推定する
+    Cavalieri 法と同じで、各スライスがその間隔ぶんの組織を代表する。スラブ厚
+    （5.5 mm）で数えるとギャップの組織を0とみなすことになり、系統的に過小になる。
+    ただし元が 4.8 mm 厚の症例では窓に元スライスが1〜2枚しか入らず、2枚のとき
+    多数決が「どちらか陽性なら陽性」になるので膨らむ。元の厚さで分けて報告する。
+    """
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(csv_path, index=False)
     ok = df[df["error"].isna()] if "error" in df else df
-    print(f"\n学習に使う症例: {len(training)} / {len(dwis)}")
+    print(f"\n学習に使う症例: {n_training} / {n_total}")
     if "error" in df and df["error"].notna().any():
         for _, r in df[df["error"].notna()].iterrows():
             print(f"  失敗 {r['subject']}: {r['error']}")
@@ -238,15 +293,14 @@ def main() -> int:
               f"落として空になった: {int(ok['emptied'].sum())} 例（ともに除外）")
         print(f"スライス数: {ok['slices_before'].median():.0f} → "
               f"{ok['slices_after'].median():.0f}（中位）")
-        kept = ok[~ok["emptied"] & ~ok["empty_before"]]
-        retained = kept["volume_ml_after"].sum() / kept["volume_ml_before"].sum()
-        print(f"病変体積: {kept['volume_ml_before'].median():.2f} → "
-              f"{kept['volume_ml_after'].median():.2f} mL（中位）、総体積の保持率 {retained:.1%}")
+        kept = ok[~ok["emptied"].astype(bool) & ~ok["empty_before"].astype(bool)]
+        for thick, group in kept.groupby(kept["through_plane_mm_before"] >= 4.0):
+            label = "元が 4 mm 以上の厚さ" if thick else "元が 2 mm 前後"
+            retained = group["volume_ml_after"].sum() / group["volume_ml_before"].sum()
+            print(f"  {label}（{len(group)} 例）: 総体積の保持率 {retained:.1%}、"
+                  f"元の格子に戻した Dice 中位 {group['roundtrip_dice'].median():.3f}"
+                  f"（最小 {group['roundtrip_dice'].min():.3f}）")
     print(f"QC を {csv_path} に出力しました")
-    print("次:")
-    print(f"  nnUNetv2_plan_and_preprocess -d {args.dataset_id} --verify_dataset_integrity")
-    print(f"  nnUNetv2_train {args.dataset_id} 3d_fullres 0")
-    return 0
 
 
 if __name__ == "__main__":

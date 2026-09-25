@@ -5,23 +5,26 @@
 測る。新規手法は提案せず、既製の nnU-Net を使う。
 
 設計書: [docs/senora-study-design.md](docs/senora-study-design.md)
-作業ログ: [docs/worklog-2026-08-27.md](docs/worklog-2026-08-27.md)（最新） /
+作業ログ: [docs/worklog-2026-09-25.md](docs/worklog-2026-09-25.md)（最新） /
+[docs/worklog-2026-08-27.md](docs/worklog-2026-08-27.md) /
 [docs/worklog-2026-07-28.md](docs/worklog-2026-07-28.md)
 スクリプト: [senora/README.md](senora/README.md)
 
-## 進捗（2026-08-28）
+## 進捗（2026-09-26）
 
-主アームは FLAIR（SENORA 16例）。学習元は ISLES 2022 FLAIR。
+主アームを FLAIR（アームC、16例）から DWI + ADC（アームA、7例）へ移した。
+アームCは全例が慢性期か不明で、急性期の ISLES で学習したモデルとは病期が合わない。
 
-| | Dataset501（等方 0.71 mm） | Dataset502（SENORA と同じ 5 mm / 6.8 mm） |
-|---|---|---|
-| 学習 | 1000 epoch 完了 | 1000 epoch 完了 |
-| ソース内 Dice 中位 | 0.132 | **0.288** |
-| SENORA 16例 Dice 中位 | 0.000 | **0.000** |
+| | Dataset501 | Dataset502 | Dataset503 |
+|---|---|---|---|
+| 入力 | FLAIR（等方 0.71 mm） | FLAIR（5 mm / 6.8 mm） | **DWI + ADC（5.5 mm / 7.15 mm）** |
+| ソース内 Dice 中位（fold 0、最終重み） | 0.132 | 0.288 | **0.827** |
+| SENORA Dice 中位 | 0.000（アームC 16例） | 0.000（同） | **0.153**（アームA 7例） |
 
-分解能を揃えた効果はソース内にだけ出た。SENORA 側の断面外間隔は
-学習時と一致しているので、空予測の原因はもう補間ではない。
-次は学習元または課題設定の見直し（設計書 8.5.6 の案 A〜D）。
+アームAの低下は、大半が参照マスクの定義と病期のずれで説明できる。
+読影医は新旧を問わず梗塞を描いているが、ISLES のラベルは急性の拡散制限域である。
+マスク内の急性コア（ADC 620 未満）に限ると、再現率は中位 0.978（コアあり4例）。
+fold 1〜4 を学習中で、主要な値は 5 fold アンサンブルで確定させる（設計書 8.6）。
 
 ## リポジトリ構成
 
