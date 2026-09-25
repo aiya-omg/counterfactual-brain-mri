@@ -63,6 +63,7 @@
 | 2 | `predict_senora_armc.py` | アームC: 頭蓋除去（HD-BET）・推論・評価 |
 | 2 | `predict_senora_arma.py` | アームA: b1000 / ADC の staging、b0 での頭蓋除去、推論・評価 |
 | 2 | `analyze_arma_diffusion.py` | 病期別の評価（急性コアとそれ以外、病変 F1、断面図）。`--work` で23例にも使う |
+| 2 | `make_review_sheets.py` | 臨床医判定の資料。予測を載せず、アームA 7例を乱数順に並べる（`results/review/`） |
 | 2 | `stage_senora_lesions.py` | 23例を DWI 格子に揃える（FLAIR → DWI の剛体登録と独立 QC）、画像上の病期を測る |
 
 ## アームAの再現
