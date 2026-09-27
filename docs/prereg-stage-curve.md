@@ -25,7 +25,7 @@
 - 計算は DWI のグリッドで行う。ADC はリサンプリングしない。shape または affine が一致しなければ止める。
 - ボクセル体積はヘッダーの affine から計算する。
 - ADC の絶対閾値（620）を使う前に、脳内の正の値の中央値から単位を ×10⁻⁶ mm²/s に揃える。帯は 200〜2000（倍率 1）、0.2〜2.0（倍率 1000）、0.0002〜0.002（倍率 10⁶）で、重なったり該当がなければ `adc_unit_unknown` とする。比の計算では単位は相殺される。
-- ISLES の脳マスクは保存されていない。`config/stage_curve.yaml` の `isles.brain_dir` が TODO のあいだは抽出しない。
+- ISLES の脳マスクは学習データの中に無かった。b1000（`imagesTr/ISLES_XXXX_0000.nii.gz`）に、SENORA と同じ HD-BET（TTA あり、1例ずつ）をかけ、`isles503_brain/ISLES_XXXX_brain.nii.gz` へ新規に保存する。既存の画像・ラベル・予測は上書きしない。
 
 ## 病変
 

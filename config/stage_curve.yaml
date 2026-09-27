@@ -41,8 +41,8 @@ isles:
   images_dir: "C:/Users/yuuya/senora_nnunet/nnUNet_raw/Dataset503_ISLES22DWIThick/imagesTr"
   labels_dir: "C:/Users/yuuya/senora_nnunet/nnUNet_raw/Dataset503_ISLES22DWIThick/labelsTr"
   results_dir: "C:/Users/yuuya/senora_nnunet/nnUNet_results/Dataset503_ISLES22DWIThick/nnUNetTrainer__nnUNetPlans__3d_fullres"
-  brain_dir: TODO
-  # このディレクトリへ {subject}_brain.nii.gz を置く。既存の予測や画像は上書きしない。
+  brain_dir: "C:/Users/yuuya/senora_nnunet/isles503_brain"
+  # b1000 に HD-BET（TTA あり）をかけた脳マスク。既存の予測や画像は上書きしていない。
   brain_name: "{subject}_brain.nii.gz"
 
 senora_masked:
