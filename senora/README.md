@@ -65,6 +65,7 @@
 | 2 | `analyze_arma_diffusion.py` | 病期別の評価（急性コアとそれ以外、病変 F1、断面図）。`--work` で23例にも使う |
 | 2 | `make_review_sheets.py` | 臨床医判定の資料。予測を載せず、アームA 7例を乱数順に並べる（`results/review/`） |
 | 2 | `stage_senora_lesions.py` | 23例を DWI 格子に揃える（FLAIR → DWI の剛体登録と独立 QC）、画像上の病期を測る |
+| 2 | `apply_unlabeled.py` | マスクのない症例に DWI モデルをかけ、ADC から作る急性コアの塊で評価する（`results/unlabeled/`） |
 
 ## アームAの再現
 
@@ -83,6 +84,9 @@ rem 23例（先に predict_senora_armc.py --stage と predict_senora_arma.py --s
 python senora\scripts\stage_senora_lesions.py
 python senora\scripts\predict_senora_arma.py --work %USERPROFILE%\senora_nnunet\senora_all --predict --evaluate --folds 0,1,2,3,4 --out senora\results\staging\dwi_model
 python senora\scripts\analyze_arma_diffusion.py --work %USERPROFILE%\senora_nnunet\senora_all --tag final_f01234 --out senora\results\staging\dwi_model
+
+rem マスクのない症例
+python senora\scripts\apply_unlabeled.py --stage --predict --analyze
 ```
 
 中断した学習の再開フラグは `--c`。`-c` ではない。
