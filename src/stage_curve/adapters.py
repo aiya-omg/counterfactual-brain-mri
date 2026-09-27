@@ -88,9 +88,10 @@ class IslesAdapter(DatasetAdapter):
             if not validation.is_dir():
                 continue
             for path in validation.glob("ISLES_*.nii.gz"):
-                if path.stem in predictions:
-                    raise ValueError(f"{path.stem} が複数の fold の検証予測にある")
-                predictions[path.stem] = path
+                subject = path.name.replace(".nii.gz", "")
+                if subject in predictions:
+                    raise ValueError(f"{subject} が複数の fold の検証予測にある")
+                predictions[subject] = path
         cases, notes = [], []
         for label_path in sorted(labels.glob("ISLES_*.nii.gz")):
             subject = label_path.name.replace(".nii.gz", "")
