@@ -32,8 +32,9 @@ diffusers/
 senora/data/
 senora/results/
 
-# Data & outputs
-data/
+# Data & outputs. The empty literature template is the one tracked file.
+data/*
+!data/literature_adc_timecourse.csv
 demo_output/
 demo_output_test/
 demo_output_v2/

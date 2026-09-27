@@ -1,0 +1,62 @@
+# 解析 S1（ADC 比に対する病変検出確率曲線）の設定。
+# 閾値は docs/prereg-stage-curve.md と実装書で固定した値。結果を見て変えない。
+# TODO が残っている項目があると、特徴量抽出はデータを書く前に止まる。
+
+seed: 20260928
+bootstrap_draws: 2000
+
+# 検出と病変
+overlap_detected: 0.10
+overlap_half: 0.5
+min_volume_ml: 0.1
+sensitivity_min_volume_ml: 0.5
+connectivity: 26
+# 膨張・収縮の1ボクセルは面で接する近傍（6近傍）の1回。事前登録に記載。
+dilation_voxels: 3
+erosion_min_voxels: 27
+inferior_fraction: 0.30
+
+# ADC。比は単位が相殺される。620 を使う前に ×10^-6 mm^2/s へ揃える。
+adc_core: 620.0
+adc_noise: 200.0
+adc_csf: 1500.0
+adc_normal_qc: [600.0, 1000.0]
+# 単位を決めるときの、変換前の中央値が入りうる帯。帯は互いに重ならない。
+adc_scale_bands:
+  - [200.0, 2000.0, 1.0]        # すでに ×10^-6
+  - [0.2, 2.0, 1000.0]          # ×10^-3
+  - [0.0002, 0.002, 1000000.0]  # mm^2/s
+restricted_b1000: 1.3
+# マスクなし症例の塊を作るときの単位確認（analyze_arma_diffusion.normal_reference と同じ）
+unlabeled_whole_adc_range: [500.0, 1500.0]
+unlabeled_min_volume_ml: 0.5
+
+qc_figures: 20
+voxel_bin_width: 0.1
+voxel_ratio_min: 0.3
+voxel_ratio_max: 3.5
+
+# ISLES の脳マスクは保存されていない。推測で埋めず、Bon がパスを入れるまで抽出は止まる。
+isles:
+  images_dir: "C:/Users/yuuya/senora_nnunet/nnUNet_raw/Dataset503_ISLES22DWIThick/imagesTr"
+  labels_dir: "C:/Users/yuuya/senora_nnunet/nnUNet_raw/Dataset503_ISLES22DWIThick/labelsTr"
+  results_dir: "C:/Users/yuuya/senora_nnunet/nnUNet_results/Dataset503_ISLES22DWIThick/nnUNetTrainer__nnUNetPlans__3d_fullres"
+  brain_dir: TODO
+  # このディレクトリへ {subject}_brain.nii.gz を置く。既存の予測や画像は上書きしない。
+  brain_name: "{subject}_brain.nii.gz"
+
+senora_masked:
+  work_dir: "C:/Users/yuuya/senora_nnunet/senora_all"
+  predictions_dir: "C:/Users/yuuya/senora_nnunet/senora_all/predictions_final_f01234"
+  participants: "senora/data/senora/participants.tsv"
+  segmentation_report: "senora/data/senora/_segmentation_report.csv"
+  exclude: ["sub-027"]
+
+senora_cluster:
+  work_dir: "C:/Users/yuuya/senora_nnunet/senora_unlabeled"
+  predictions_dir: "C:/Users/yuuya/senora_nnunet/senora_unlabeled/predictions_final_f01234"
+  participants: "senora/data/senora/participants.tsv"
+  exclude: ["sub-026"]
+
+literature_csv: "data/literature_adc_timecourse.csv"
+output_dir: "results/stage_curve"
